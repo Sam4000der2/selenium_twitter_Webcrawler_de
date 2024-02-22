@@ -1,0 +1,58 @@
+import asyncio
+import telegram
+from telegram.ext import Updater
+
+# CHat_ID's und Suchbegriffe
+my_filter = [
+    {"chat_id": YOUR_CHAT_ID, "keywords": ["exempel_term", "Trump", "Bus_123", "RE2","Berlin"]}
+]
+
+# Telegram-Bot-Parameter
+bot_token = "YOUR:TOKEN"
+
+
+# Lade bereits gelesene Einträge aus einer Datei
+try:
+    with open("read_entries.txt", "r") as f:
+        read_entries = set(f.read().splitlines())
+except FileNotFoundError:
+    read_entries = set()
+
+async def send_telegram_message(bot, chat_id, message):
+    await bot.send_message(chat_id=chat_id, text=message)
+    
+async def send_telegram_picture (bot, chat_id, images):
+    for image_url in images:
+        if image_url != "":
+            bot.send_photo(chat_id, image_url)
+        
+
+async def main(new_tweets):
+    # Initialisiere den Telegram-Bot
+    bot = telegram.Bot(token=bot_token)
+    print("TStart")
+    
+    # Ausgabe der Tweet-Texte
+    for n, tweet in enumerate(new_tweets, start=1):
+        user = tweet['user']
+        username = tweet['username']
+        content = tweet['content']
+        posted_time = tweet['posted_time']
+        var_href = tweet['var_href']
+        images = tweet['images']
+        message = f"Der {user} hat einen neuen Tweet veröffentlicht:\n\n{content}\n\nTweet abgesetzt um: {posted_time}\n\nLink zum Tweet: {var_href}"
+        
+        for entries in my_filter:
+            
+            chat_id = entries["chat_id"]
+            keywords = entries["keywords"]
+
+            for keyword in keywords:
+                if keyword in content:  # Überprüfe, ob das Keyword enthalten ist
+                    await send_telegram_message(bot, chat_id, message)
+                    await send_telegram_picture(bot, chat_id, images)
+        
+
+if __name__ == '__main__':
+    #asyncio.run(main(tweet_data))
+      print("This script should be imported and not run directly.")
