@@ -1,15 +1,27 @@
 import asyncio
+import os
 import telegram
 from telegram.ext import Updater
 
-# CHat_ID's und Suchbegriffe
-my_filter = [
-    {"chat_id": CHAT_ID, "keywords": ["Streik", "#BERLIN"]},
-    {"chat_id": CHAT_ID, "keywords": ["Streik", "#S41", "#S42"]}
-]
+# Chat_ID's und Suchbegriffe
+#my_filter = [
+#    {"chat_id": 1234, "keywords": ["Streik", "#X34_BVG", "#134_BVG", "#N34","#S41", "#S42", "Spandau", "Heerstr", "Kladow", "Gatow", "Messe Nord", "ICC"]},
+#    {"chat_id": 12345, "keywords": ["Streik", "#S41", "#S42"]}
+#]
+
 
 # Telegram-Bot-Parameter
-bot_token = "YOUR:TOKEN"
+bot_token = "API:TOKEN"
+
+#Die Datei erstezt die alte my_filter Liste
+DATA_FILE = 'data.json'
+
+def load_data():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, 'r') as file:
+            return json.load(file)
+    else:
+        return {"chat_ids": {}, "filter_rules": {}}
 
 
 # Lade bereits gelesene Einträge aus einer Datei
@@ -31,6 +43,7 @@ async def send_telegram_picture (bot, chat_id, images):
 async def main(new_tweets):
     # Initialisiere den Telegram-Bot
     bot = telegram.Bot(token=bot_token)
+    my_filter = load_data()
     
     # Ausgabe der Tweet-Texte
     for n, tweet in enumerate(new_tweets, start=1):
@@ -45,8 +58,8 @@ async def main(new_tweets):
         
         for entries in my_filter:
             
-            chat_id = entries["chat_id"]
-            keywords = entries["keywords"]
+            chat_id = entries["chat_ids"]
+            keywords = entries["filter_rules"]
 
             for keyword in keywords:
                 if keyword in content:  # Überprüfe, ob das Keyword enthalten ist
