@@ -19,9 +19,22 @@ DATA_FILE = 'data.json'
 def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'r') as file:
-            return json.load(file)
+            return read_json_to_dict(file)
     else:
-        return {"chat_ids": {}, "filter_rules": {}}
+        return {"chat_id": {}, "keywords": {}}
+        
+def read_json_to_dict(json_data):
+    data_dict = []
+    data = json.loads(json_data)
+    
+    chat_ids = data.get("chat_ids", {})
+    filter_rules = data.get("filter_rules", {})
+    
+    for chat_id, keywords in filter_rules.items():
+        entry = {"chat_id": int(chat_id), "keywords": keywords}
+        data_dict.append(entry)
+    
+    return data_dict
 
 
 # Lade bereits gelesene Einträge aus einer Datei
@@ -58,8 +71,8 @@ async def main(new_tweets):
         
         for entries in my_filter:
             
-            chat_id = entries["chat_ids"]
-            keywords = entries["filter_rules"]
+            chat_id = entries["chat_id"]
+            keywords = entries["keywords"]
 
             for keyword in keywords:
                 if keyword in content:  # Überprüfe, ob das Keyword enthalten ist
