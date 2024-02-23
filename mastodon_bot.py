@@ -86,3 +86,4 @@ if __name__ == "__main__":
     #new_tweets = [...]  # Hier kommen die neuen Tweets
     #asyncio.run(main(new_tweets))
     print("This script should be imported and not run directly.")
+
