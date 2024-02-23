@@ -1,13 +1,9 @@
-import telegram_bot
-import mastodon_bot
 import time
 import asyncio
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.common.by import By
 from dateutil.parser import parse
-
-
 
 #Zum aufrufen von nicht öffentlich sichtbaren Twitterseiten werden die gespeicherten Cookies von der Twitteranmeldung benötigt. Natürlich Optional
 firefox_profile_path = "C:\\Users\\YOUR_USER\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\YOUR_PROFILE.default-release"
@@ -76,35 +72,40 @@ def find_all_tweets(driver):
 
 def check_and_write_tweets(tweet_data):
     try:
-        # Öffne die Datei im Lese-Modus, um vorhandene Links zu überprüfen
-        with open("existing_tweets.txt", "r") as file:
-            existing_tweets = file.read().splitlines()
-        
-        new_tweets = []
-        # Überprüfe jeden Tweet in den Daten
-        for n, tweet in enumerate(tweet_data, start=1):
-            user = tweet['user']
-            username = tweet['username']
-            content = tweet['content']
-            posted_time = tweet['posted_time']
-            var_href = tweet['var_href']
-            images = tweet['images']
+        if os.path.exists(filename):
+           # Öffne die Datei im Lese-Modus, um vorhandene Links zu überprüfen
+            with open(filename, "r") as file:
+                existing_tweets = file.read().splitlines()
             
-            
-            # Überprüfe, ob der Link bereits in den vorhandenen Tweets enthalten ist
-            if var_href not in existing_tweets:
-                new_tweets.append({
-                    "user": user,
-                    "username": username,
-                    "content": content,
-                    "posted_time": posted_time,
-                    "var_href": var_href,
-                    "images": images
-                })
+            new_tweets = []
+            # Überprüfe jeden Tweet in den Daten
+            for n, tweet in enumerate(tweet_data, start=1):
+                user = tweet['user']
+                username = tweet['username']
+                content = tweet['content']
+                posted_time = tweet['posted_time']
+                var_href = tweet['var_href']
+                images = tweet['images']
+                
+                
+                # Überprüfe, ob der Link bereits in den vorhandenen Tweets enthalten ist
+                if var_href not in existing_tweets:
+                    new_tweets.append({
+                        "user": user,
+                        "username": username,
+                        "content": content,
+                        "posted_time": posted_time,
+                        "var_href": var_href,
+                        "images": images
+                    })
 
-                # Wenn nicht, schreibe den Link in die Datei
-                with open("existing_tweets.txt", "a") as file:
-                    file.write(var_href + "\n")
+                    # Wenn nicht, schreibe den Link in die Datei
+                    with open(filename, "a") as f:
+                        file.write(var_href + "\n")
+        else:
+            # Wenn nicht, schreibe den Link in die Datei
+            with open(filename, "w") as f:
+                file.write(var_href + "\n")
         
         return new_tweets
     except Exception as ex:
@@ -114,7 +115,7 @@ def check_and_write_tweets(tweet_data):
 def trim_existing_tweets_file():
     try:
         # Öffne die Datei im Lese-Modus, um die Anzahl der Zeilen zu überprüfen
-        with open("existing_tweets.txt", "r") as file:
+        with open(filename, "r") as file:
             lines = file.readlines()
         
         # Überprüfe die Anzahl der Zeilen
@@ -122,7 +123,7 @@ def trim_existing_tweets_file():
         
         if num_lines > 100:
             # Wenn mehr als 100 Zeilen vorhanden sind, lösche die ältesten 50 Zeilen
-            with open("existing_tweets.txt", "w") as file:
+            with open(filename, "w") as file:
                 file.writelines(lines[50:])
             
             #print("Trimmed existing_tweets.txt file.")
@@ -134,7 +135,8 @@ def trim_existing_tweets_file():
 
 async def main():
     while True:
-        try:
+
+       try:
             driver = webdriver.Firefox(options=firefox_options, firefox_profile=firefox_profile_path)
             driver.get(twitter_link)
             tweet_data = find_all_tweets(driver)
