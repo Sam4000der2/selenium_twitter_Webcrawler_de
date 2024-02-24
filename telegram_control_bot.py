@@ -115,6 +115,7 @@ async def process_update(bot, update):
         chat_id = update.message.chat.id
         if message.startswith('/start'):
             await start_command(bot, chat_id)
+            await help_command(bot, chat_id)
         elif message.startswith('/stop'):
             await stop_command(bot, chat_id)
         elif message.startswith('/hilfe'):
@@ -131,6 +132,7 @@ async def process_update(bot, update):
             await help_command(bot, chat_id)
         else:
             await start_command(bot, chat_id)
+            await help_command(bot, chat_id)
 
 # Ausführen des Bots
 if __name__ == "__main__":
