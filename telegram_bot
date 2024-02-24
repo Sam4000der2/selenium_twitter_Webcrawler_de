@@ -75,10 +75,13 @@ async def main(new_tweets):
             chat_id = entries["chat_id"]
             keywords = entries["keywords"]
 
-            for keyword in keywords:
-                if keyword in content:  # Überprüfe, ob das Keyword enthalten ist
-                    await send_telegram_message(bot, chat_id, message)
-                    #await send_telegram_picture(bot, chat_id, images)
+            if not keywords:
+                await send_telegram_message(bot, chat_id, message)
+            else:
+                for keyword in keywords:
+                    if keyword in content:  # Überprüfe, ob das Keyword enthalten ist
+                        await send_telegram_message(bot, chat_id, message)
+                        #await send_telegram_picture(bot, chat_id, images)
         
 
 if __name__ == '__main__':
