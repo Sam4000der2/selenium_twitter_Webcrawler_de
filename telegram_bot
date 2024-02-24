@@ -22,18 +22,19 @@ def load_data():
             return read_json_to_dict(file)
     else:
         return {"chat_id": {}, "keywords": {}}
-        
-def read_json_to_dict(json_data):
+
+def read_json_to_dict(json_file):
     data_dict = []
+    json_data = json_file.read()  # Hier wird der Inhalt des TextIOWrapper-Objekts gelesen
     data = json.loads(json_data)
-    
+
     chat_ids = data.get("chat_ids", {})
     filter_rules = data.get("filter_rules", {})
-    
+
     for chat_id, keywords in filter_rules.items():
         entry = {"chat_id": int(chat_id), "keywords": keywords}
         data_dict.append(entry)
-    
+
     return data_dict
 
 
