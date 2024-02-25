@@ -5,7 +5,7 @@
 
 **Übersicht:**
 
-Dieser Bot ermöglicht das Crawlen von Twitter-Daten ohne die Verwendung der Twitter-API. Er leitet alle Toots über die Module Telegram_Bot und Mastodon_Bot weiter. Bei Telegram gibt es die Funktion der optionalen Filterung nach Stichworten wie spezifischen Linien oder Orten. Zur Steuerung des Telegram-Bots gibt es zusätzlich einen Control-Bot, der es ermöglicht, Chat-IDs und Filterbegriffe anzulegen und sich über den Benutzer bedienen zu lassen.
+Dieser Bot ermöglicht das Crawlen von Twitter-Daten ohne die Verwendung der Twitter-API. Er leitet alle Tweets über die Module Telegram_Bot und Mastodon_Bot weiter. Bei Telegram gibt es die Funktion der optionalen Filterung nach Stichworten wie spezifischen Linien oder Orten. Zur Steuerung des Telegram-Bots gibt es zusätzlich einen Control-Bot, der es ermöglicht, Chat-IDs und Filterbegriffe anzulegen und sich über den Benutzer bedienen zu lassen.
 
 **Anleitung:**
 
