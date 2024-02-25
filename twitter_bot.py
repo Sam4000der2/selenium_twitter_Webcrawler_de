@@ -19,6 +19,8 @@ twitter_link = "https://twitter.com/i/lists/1741534129215172901"
 
 firefox_options = Options()
 firefox_options.headless = True   # Öffnet den Browser sichtbar für den Benutzer
+
+#Falls du ohne einloggen Twitter crawlen willst, bitte ausklammern:
 firefox_profile = webdriver.FirefoxProfile(firefox_profile_path)
 firefox_options.profile = firefox_profile
 
@@ -155,6 +157,9 @@ def trim_existing_tweets_file():
 async def main():
     while True:
         try:
+            #Falls du ohne einloggen Twitter crawlen willst:
+            #driver = webdriver.Firefox(options=firefox_options)
+            
             driver = webdriver.Firefox(options=firefox_options, firefox_profile=firefox_profile_path)
             driver.get(twitter_link)
             tweet_data = find_all_tweets(driver)
@@ -173,6 +178,7 @@ async def main():
 
             trim_existing_tweets_file()
 
+            #Falls du ohne einloggen Twitter crawlen willst, brauchst du die nicht mehr
             delete_temp_files()
 
             # Wartezeit, bevor die nächste Iteration beginnt
