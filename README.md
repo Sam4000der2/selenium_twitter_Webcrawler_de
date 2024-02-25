@@ -1,5 +1,6 @@
-**Selenium Twitter Webcrawler**
+**Selenium Twitter Webcrawler - deutsche Version**
 
+ ***[TO THE ENGLISH VERSION](https://github.com/Sam4000der2/selenium_twitter_Webcrawler_en) ***
 ---
 
 **Übersicht:**
