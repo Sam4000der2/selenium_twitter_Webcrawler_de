@@ -5,16 +5,19 @@ from mastodon import Mastodon
 api_base_url = 'https://EXEMPEL.social'  # Die Basis-URL Ihrer Mastodon-Instanz
 access_token = 'YOUR_TOKEN'  # Ihr Access-Token
 
+
 def post_tweet(mastodon, message):
     # Veröffentliche den Tweet auf Mastodon
     message_cut = truncate_text(message)
     mastodon.status_post(message_cut, visibility='unlisted')
+    
     
 def truncate_text(text):
     # Ersetze alle '@' Zeichen durch '#'
     text = text.replace('@', '#')
     # Entferne doppelte '#'
     text = text.replace('##', '#')
+    text = text.replace('https://twitter.com', '#shitter ')
     # Prüfe, ob der Text länger als 500 Zeichen ist
     if len(text) > 500:
         return text[:500]
@@ -69,10 +72,12 @@ def main(new_tweets):
         content = tweet['content']
         posted_time = tweet['posted_time']
         var_href = tweet['var_href']
+        var_href = var_href.replace('https://twitter.com', '#shitter ')
+
         images = tweet['images']
         hashtags = extract_hashtags(content, username)
-        message = f"#{username}:\n\n{content}\n\n#öpnv_berlin_bot\n\nscr: {var_href}"
-        
+        message = f"#{username}:\n\n{content}\n\n#öpnv_berlin_bot\n\nscr: {var_href}\n\nposted time (utc): {posted_time}"
+
         post_tweet(mastodon, message)
         
         #if not images:
@@ -86,4 +91,3 @@ if __name__ == "__main__":
     #new_tweets = [...]  # Hier kommen die neuen Tweets
     #asyncio.run(main(new_tweets))
     print("This script should be imported and not run directly.")
-
