@@ -2,13 +2,7 @@ import asyncio
 import os
 import telegram
 from telegram.ext import Updater
-
-# Chat_ID's und Suchbegriffe
-#my_filter = [
-#    {"chat_id": 1234, "keywords": ["Streik", "#X34_BVG", "#134_BVG", "#N34","#S41", "#S42", "Spandau", "Heerstr", "Kladow", "Gatow", "Messe Nord", "ICC"]},
-#    {"chat_id": 12345, "keywords": ["Streik", "#S41", "#S42"]}
-#]
-
+import json
 
 # Telegram-Bot-Parameter
 bot_token = "API:TOKEN"
@@ -32,8 +26,10 @@ def read_json_to_dict(json_file):
     filter_rules = data.get("filter_rules", {})
 
     for chat_id, keywords in filter_rules.items():
-        entry = {"chat_id": int(chat_id), "keywords": keywords}
-        data_dict.append(entry)
+        # Überprüfen, ob die chat_id in chat_ids vorhanden ist
+        if chat_id in chat_ids:
+            entry = {"chat_id": int(chat_id), "keywords": keywords}
+            data_dict.append(entry)
 
     return data_dict
 
