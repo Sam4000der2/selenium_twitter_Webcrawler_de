@@ -8,6 +8,7 @@
 Das Modul Selenium unterstützt scheinbar keine Snap Pakete, bitte verzichtet darauf die Nutzung der Distribution Ubuntu in Kombination mit dem Projekt. Die Distributionen Mint und Debian sollten funktionieren. Die Nutzung von flatpak für Firefox habe ich in Kombination mit dem Projekt nicht getestet.
 
 An sich funktioniert auch Chrome mit Selenium, die Verknüpfung scheint aber buggiger zu sein.
+
 ---
 
 **Übersicht:**
