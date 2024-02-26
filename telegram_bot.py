@@ -34,13 +34,6 @@ def read_json_to_dict(json_file):
     return data_dict
 
 
-# Lade bereits gelesene Einträge aus einer Datei
-try:
-    with open("read_entries.txt", "r") as f:
-        read_entries = set(f.read().splitlines())
-except FileNotFoundError:
-    read_entries = set()
-
 async def send_telegram_message(bot, chat_id, message):
     await bot.send_message(chat_id=chat_id, text=message)
     
