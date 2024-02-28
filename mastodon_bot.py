@@ -75,10 +75,14 @@ def main(new_tweets):
         var_href = var_href.replace('https://twitter.com', '#shitter ')
 
         images = tweet['images']
+        extern_urls = tweet['extern_urls']
+        images_as_string = tweet['images_as_string']
+        extern_urls_as_string = tweet['extern_urls_as_string']
+        
         hashtags = extract_hashtags(content, username)
-        message = f"#{username}:\n\n{content}\n\n#öpnv_berlin_bot\n\nscr: {var_href}\n\nposted time (utc): {posted_time}"
+        message = f"#{username}:\n\n{content}\n\n#öpnv_berlin_bot\n\nsrc: {var_href}\n{extern_urls_as_string}\n{posted_time}\n{images_as_string}"
 
-        post_tweet(mastodon, message)
+        post_tweet(mastodon, message, username)
         
         #if not images:
             #print("")
