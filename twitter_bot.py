@@ -65,23 +65,68 @@ def find_all_tweets(driver):
             
             timestamp = tweet.find_element(By.TAG_NAME, "time").get_attribute("datetime")
             
-            posted_time = parse(timestamp).isoformat()
-            
+           # Zeitstempel parsen
+            posted_time_utc = parse(timestamp)
+
+            # Prüfen, ob die Zeitzone Sommerzeit (DST) ist
+            is_dst = bool(datetime.datetime.now().astimezone().dst())
+
+            # Lokale Zeitzone festlegen (hier als Beispiel Berlin)
+            local_timezone = datetime.timezone(datetime.timedelta(hours=2 if is_dst else 1))  # MESZ (UTC+2) oder MEZ (UTC+1)
+
+            # Zeitstempel in lokale Zeitzone konvertieren
+            posted_time_local = posted_time_utc.astimezone(local_timezone)
+
+            # Gewünschtes Format für Datum und Uhrzeit definieren
+            desired_format = "%d.%m.%Y %H:%M"
+
+            # Zeitstempel im gewünschten Format ausgeben
+            posted_time = posted_time_local.strftime(desired_format)
+                       
             image_element = tweet.find_elements(By.CSS_SELECTOR,'div[data-testid="tweetPhoto"]')
             images = []
+            
             for image_div in image_element:
                 href = image_div.find_element(By.TAG_NAME,
                                               "img").get_attribute("src")
                 images.append(href)
                 href = href.replace("&name=small", "")
         
+            extern_url_elements = tweet.find_elements(By.CSS_SELECTOR, '[data-testid="card.wrapper"]')
+            extern_urls = []
+            for extern_url_element in extern_url_elements:
+                href_0 = extern_url_element.find_element(By.TAG_NAME, 'a')
+                href = href_0.get_attribute("href")
+                extern_urls.append(href)
+            
+            # Regulärer Ausdruck, um URLs zu erkennen
+            url_pattern = re.compile(r"https?://\S+")
+            content = url_pattern.sub('', content)
+            
+            url_pattern = re.compile(r"http?://\S+")
+            content = url_pattern.sub('', content)
+            
+            if not images:
+                images_as_string = ""
+            else:
+                images_as_string = str(images).replace("[]", "").replace("'", "")
+                
+            if not extern_urls:
+                extern_urls_as_string = ""
+            else:
+                extern_urls_as_string = str(extern_urls).replace("[]", "").replace("'", "")
+
+            
             tweet_data.append({
                 "user": user,
                 "username": username,
                 "content": content,
                 "posted_time": posted_time,
                 "var_href": var_href,
-                "images": images
+                "images": images,
+                "extern_urls": extern_urls,
+                "images_as_string": images_as_string,
+                "extern_urls_as_string": extern_urls_as_string
             })
            
  
@@ -110,6 +155,9 @@ def check_and_write_tweets(tweet_data):
             posted_time = tweet['posted_time']
             var_href = tweet['var_href']
             images = tweet['images']
+            extern_urls = tweet['extern_urls']
+            images_as_string = tweet['images_as_string']
+            extern_urls_as_string = tweet['extern_urls_as_string']
 
 
             # Überprüfe, ob der Link bereits in den vorhandenen Tweets enthalten ist
@@ -120,7 +168,10 @@ def check_and_write_tweets(tweet_data):
                     "content": content,
                     "posted_time": posted_time,
                     "var_href": var_href,
-                    "images": images
+                    "images": images,
+                    "extern_urls": extern_urls,
+                    "images_as_string": images_as_string,
+                    "extern_urls_as_string": extern_urls_as_string
                 })
 
                 # Wenn nicht, schreibe den Link in die Datei
