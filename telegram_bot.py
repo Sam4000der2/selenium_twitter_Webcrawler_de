@@ -56,7 +56,10 @@ async def main(new_tweets):
         posted_time = tweet['posted_time']
         var_href = tweet['var_href']
         images = tweet['images']
-        message = f"{username} hat einen neuen Tweet veröffentlicht:\n\n{content}\n\nTweet abgesetzt um: {posted_time}\n\nLink zum Tweet: {var_href}"
+        extern_urls = tweet['extern_urls']
+        images_as_string = tweet['images_as_string']
+        extern_urls_as_string = tweet['extern_urls_as_string']
+        message = f"{username} hat einen neuen Tweet veröffentlicht:\n\n{content}\n\nTweet vom: {posted_time}\n\nLink zum Tweet: {var_href}\n\n{extern_urls_as_string}"
         message = message.replace('@', '#')
         
         for entries in my_filter:
