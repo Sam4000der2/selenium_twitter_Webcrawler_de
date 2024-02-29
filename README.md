@@ -74,4 +74,52 @@ WantedBy=multi-user.target
 
 **Schritt 9:** Herzlichen Glückwunsch, der Bot sollte nun laufen.
 
+**Schritt 10:** Falls gewünscht eine RAM Disc anlegen.
+
+Eine RAM-Disk kann für temporäre Dateien in `/tmp` und `/var/tmp` verwendet werden, um die Geschwindigkeit zu erhöhen und die Festplatte/SSD/Speicherkarte zu schonen. Gerade da der Bug mit den andauernde Kopien anlegen des Firefox Profils noch nicht gelöst ist.
+
+**Schritt 11:** RAM-Disk-Größe festlegen
+
+Entscheide, wie viel Speicherplatz du der RAM-Disk zuweisen möchtest. In diesem Beispiel verwenden wir jeweils 1 1/2 GB für `/tmp` und `/var/tmp`.
+
+**Schritt 12:** RAM-Disk einrichten
+
+Öffne ein Terminal und führe die folgenden Befehle aus:
+
+```bash
+sudo mount -t tmpfs -o size=1536M tmpfs /tmp
+sudo mount -t tmpfs -o size=1536M tmpfs /var/tmp
+```
+
+Dies erstellt separate RAM-Disks für `/tmp` und `/var/tmp` mit jeweils 1 1/2 GB Größe.
+
+**Schritt 13:** Automatisches Einhängen der RAM-Disks
+
+Um sicherzustellen, dass die RAM-Disks beim Start automatisch eingehängt werden, bearbeite die Datei `/etc/fstab`:
+
+```bash
+sudo nano /etc/fstab
+```
+
+Füge die folgenden Zeilen am Ende der Datei hinzu:
+
+```
+tmpfs   /tmp   tmpfs   size=1536M   0   0
+tmpfs   /var/tmp   tmpfs   size=1536M   0   0
+```
+
+Speichere und schließe die Datei.
+
+**Schritt 14:** Neustart des Systems
+
+Starte dein System neu, um sicherzustellen, dass die Änderungen wirksam werden:
+
+```bash
+sudo reboot
+```
+
+Nach diesen Schritten sollten separate RAM-Disks für `/tmp` und `/var/tmp` mit jeweils 1 1/2 GB Größe eingerichtet sein und automatisch beim Start des Systems gemountet werden.
+
+---
+
 Vielen Dank an [https://github.com/shaikhsajid1111/twitter-scraper-selenium/blob/main/twitter_scraper_selenium/element_finder.py](https://github.com/shaikhsajid1111/twitter-scraper-selenium/blob/main/twitter_scraper_selenium/element_finder.py), dank diesem Projekt bin ich an die CSS-Sektoren gekommen, um die Tweets zu erhalten. Das Projekt eignet sich als Fertiglösung für Anfänger, die nur Profile crawlen wollen. Diese sind jedoch inzwischen oft nicht mehr chronologisch sortiert. Deshalb mein Ansatz mit den Twitterlisten und mehr Freiheit der Twitterseiten.
