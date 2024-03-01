@@ -31,15 +31,15 @@ logging.basicConfig(filename='twitter_bot.log', level=logging.ERROR)
 #selenium erzeugt andauernd eine Arbeitskopie des Firefox Profils, die Funktion löscht diese wieder. Sonst wird der Speicherplatz schnell knapp.
 #Falls ohne Einloggen bei Twitter gearbeitet werden will, kann diese Funktion samt Profil Option ausgeklammert werden.
 def delete_temp_files():
-    try:
-        # Überprüfe temporäre Dateien in /tmp und /var/tmp
-        for temp_dir in ['/tmp', '/var/tmp']:
-            for root, dirs, files in os.walk(temp_dir):
-                for name in files:
-                    if name.startswith("rust_mozprofile") or name.startswith("tmp"):
-                        os.remove(os.path.join(root, name))
-    except Exception as ex:
-         logging.error(f"Error deleting temp files: {ex}")
+    folder_path = '/tmp'
+    for folder_name in os.listdir(folder_path):
+        if folder_name.startswith('rust_mozprofile') or folder_name.startswith('tmp'):
+            folder_full_path = os.path.join(folder_path, folder_name)
+            try:
+                os.rmdir(folder_full_path)
+                print(f"Deleted folder: {folder_full_path}")
+            except Exception as e:
+                print(f"Error deleting folder {folder_full_path}: {e}")
 
 def find_all_tweets(driver):
     """Finds all tweets from the page"""
