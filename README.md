@@ -44,7 +44,7 @@ Dieser Bot ermöglicht das Crawlen von Twitter-Daten ohne die Verwendung der Twi
 **Schritt 6:** Führe testweise im Ordner des Bots den Bot aus: `python twitter_bot.py`.
 
 - Im besten Fall wird das Modul selenium den passenden Geckodriver für Firefox automatisch installieren.
-- Falls nicht: Lade die passende Geckodriver-Version herunter (x64: [https://github.com/mozilla/geckodriver/releases](https://github.com/mozilla/geckodriver/releases) bzw. arm: [https://github.com/jamesmortensen/geckodriver-arm-binaries/releases](https://github.com/jamesmortensen/geckodriver-arm-binaries/releases)). Entpacke den Geckodriver und kopiere ihn aus den geöffneten Ordner mit dem Befehl `sudo cp geckodriver /usr/local/bin/geckodriver` in den passenden Ordner.
+- Falls nicht: Lade die passende Geckodriver-Version herunter (Linux, Windows, Mac, Arm Linux: [https://github.com/mozilla/geckodriver/releases](https://github.com/mozilla/geckodriver/releases). Entpacke den Geckodriver und kopiere ihn aus den geöffneten Ordner mit dem Befehl `sudo cp geckodriver /usr/local/bin/geckodriver` in den passenden Ordner.
 
 **Schritt 7:** Falls du den Telegram Bot nutzt, füge auch im `telegram_controll_bot.py` den API-Key hinzu. Am besten statt `DATA_FILE = 'data.json'` eine absolute Pfadangabe zu deinem Botordner verwenden, vergiss dann nicht, dies auch in `telegram_bot.py` zu ändern.
 
