@@ -4,13 +4,14 @@ import telegram
 from telegram.ext import Updater
 import json
 
+admin = "chatid_from_admin"
+
 # Telegram-Bot-Parameter
 bot_token = "API:TOKEN"
 
 #Die Datei erstezt die alte my_filter Liste
 DATA_FILE = 'data.json'
 
-def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'r') as file:
             return read_json_to_dict(file)
@@ -32,6 +33,7 @@ def read_json_to_dict(json_file):
             data_dict.append(entry)
 
     return data_dict
+
 
 
 async def send_telegram_message(bot, chat_id, message):
@@ -61,13 +63,17 @@ async def main(new_tweets):
         extern_urls_as_string = tweet['extern_urls_as_string']
         message = f"{username} hat einen neuen Tweet veröffentlicht:\n\n{content}\n\nTweet vom: {posted_time}\n\nLink zum Tweet: {var_href}\n\n{extern_urls_as_string}"
         message = message.replace('@', '#')
+
         
         for entries in my_filter:
             
             chat_id = entries["chat_id"]
             keywords = entries["keywords"]
-
-            if not keywords:
+            if username == "Servicemeldung":
+                await send_telegram_message(bot, chat_id, message)
+            elif username == "me_1234_me":
+               await send_telegram_message(bot, admin, message)
+            elif not keywords:
                 await send_telegram_message(bot, chat_id, message)
             else:
                 keywordincontent = False
