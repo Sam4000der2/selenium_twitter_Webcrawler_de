@@ -59,7 +59,7 @@ After=network.target
 
 [Service]
 WorkingDirectory=/[Ordnerpfad zu deinem Botordner]
-ExecStart=python twitter_bot.py
+ExecStart=python3 twitter_bot.py
 Restart=always
 RestartSec=10
 
