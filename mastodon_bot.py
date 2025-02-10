@@ -11,7 +11,7 @@ import tempfile
 import cv2
 
 instances = {
-    'instance1': {'access_token': 'your_token', 'api_base_url': 'https://instance1.exempel.org},
+    'instance1': {'access_token': 'your_token', 'api_base_url': 'https://instance1.exempel.org'},
     'instance2': {'access_token': 'your_token', 'api_base_url': 'https://instance2.exempel.org'},
     'instance3': {'access_token': 'your_token', 'api_base_url': 'https://instance3.exempel.org'},
     'instance4': {'access_token': 'your_token', 'api_base_url': 'https://instance4.exempel.org'}
