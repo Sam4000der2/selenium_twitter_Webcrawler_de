@@ -10,6 +10,9 @@ BOT_TOKEN = "api:token"
 # Dateiname für Chat-IDs und Filterregeln
 DATA_FILE = 'data.json'
 
+# Insert your chatid
+admin = 000000000
+
 # Funktion zum Laden der Daten aus der Datei
 def load_data():
     if os.path.exists(DATA_FILE):
@@ -159,6 +162,126 @@ async def help_command(bot, chat_id):
     help_text += "/delrule [deine Stichworte]\n"
     await bot.send_message(chat_id=chat_id, text=help_text)
 
+# Funktion für den /hilfe-Befehl zum Anzeigen aller verfügbaren Befehle
+async def admin_help(bot, chat_id):
+    help_text = "/send Dein Text wird an alle Nutzer des Bots einschließlich Mastodon und Telegram gesendet\n\n"
+    help_text += "/me Dein Text an dich selber gesendet, zum testen\n\n"
+    help_text += "/telegram Dein Text wird an alle Telegram Bot Nutzer gesendet\n\n"
+    help_text += "/mastodon Dein Text wird an alle Mastodon Bot Nutzer gesendet"
+    await bot.send_message(chat_id=chat_id, text=help_text)
+
+def service_tweet(message):
+    service_message = []
+
+    zeitstempel = datetime.now().strftime("%d.%m.%Y %H:%M")
+    service_message.append({
+        "user": "Servicemeldung",
+        "username": "Servicemeldung",
+        "content": message,
+        "posted_time": zeitstempel,
+        "var_href": "",
+        "images": "",
+        "extern_urls": "",
+        "images_as_string": "",
+        "extern_urls_as_string": ""
+    })
+    return service_message
+
+def split_service_message(service_message, max_length=450):
+    parts = []
+    while service_message:
+        if len(service_message) <= max_length:
+            parts.append(service_message)
+            break
+
+        split_index = service_message[:max_length].rfind('. ')
+        if split_index == -1:
+            split_index = max_length
+        else:
+            split_index += 1
+
+        parts.append(service_message[:split_index].strip())
+        service_message = service_message[split_index:].strip()
+
+    # Füge die Part-Information und Zeilenumbrüche hinzu
+    for i in range(len(parts)):
+        parts[i] = f"[Part {i+1}]\n\n{parts[i]}"
+
+    return parts
+
+def text_formatierer (message):
+    message = message.replace('. ', '.\n')
+    message = message.replace(': ', ':\n')
+    message = message.replace('! ', '!\n')
+    message = message.replace('? ', '?\n')
+    message = message.replace('/n', '\n')
+
+    return message
+
+async def admin_telegram_send(message):
+    formated_message = text_formatierer(message)
+    service_message = service_tweet(formated_message)
+    try:
+        await telegram_bot.main(service_message)
+    except Exception as e:
+        print(e)
+
+def admin_mastodon_send(message):
+    service_message = service_tweet(message)
+    service_message = text_formatierer(service_message)
+    try:
+        if len(service_message) > 470:
+            parts = split_service_message(service_message)
+
+            for i, part in enumerate(parts):
+                mastodon_bot.main(part)
+        else:
+            mastodon_bot.main(service_message)
+    except Exception as e:
+        print(e)
+
+async def admin_send_all(message):
+    formated_message = text_formatierer(message)
+    service_message = service_tweet(formated_message)
+
+
+    try:
+        await telegram_bot.main(service_message)
+    except Exception as e:
+        print(e)
+    try:
+        if len(service_message) > 470:
+            parts = split_service_message(service_message)
+
+            for i, part in enumerate(parts):
+                mastodon_bot.main(part)
+        else:
+            mastodon_bot.main(service_message)
+
+    except Exception as e:
+        print(e)
+
+async def admin_send_me(message):
+    message_content = text_formatierer(message)
+    service_message = []
+    zeitstempel = datetime.now().strftime("%d.%m.%Y %H:%M")
+    service_message.append({
+        "user": "me_1234_me",
+        "username": "me_1234_me",
+        "content": message_content,
+        "posted_time": zeitstempel,
+        "var_href": "",
+        "images": "",
+        "extern_urls": "",
+        "images_as_string": "",
+        "extern_urls_as_string": ""
+    })
+    try:
+        await telegram_bot.main(service_message)
+    except Exception as e:
+        print(e)
+
+
 # Funktion zum Starten des Bots
 async def start_bot():
     bot = telegram.Bot(token=BOT_TOKEN)
@@ -192,6 +315,20 @@ async def process_update(bot, update):
         elif message.startswith('/list'):
             await add_exempel_command(bot, chat_id)
             await del_exempel_command(bot, chat_id)
+        elif message.startswith('/') and chat_id == admin:
+            command, *args = message.split()
+            message_content = ' '.join(args)
+
+            if command == '/me' and message_content:
+                await admin_send_me(message_content)
+            elif command == '/mast' and message_content:
+                await admin_mastodon_send(message_content)
+            elif command == '/tele' and message_content:
+                await admin_telegram_send(message_content)
+            elif command == '/send' and message_content:
+                await admin_send_all(message_content)
+            else:
+                await admin_help(bot, chat_id)
         elif message.startswith('/'):
             await help_command(bot, chat_id)
         else:
