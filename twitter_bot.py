@@ -31,7 +31,7 @@ firefox_options.add_argument(f"-profile")
 firefox_options.add_argument(firefox_profile_path)
 
 # Logging configuration
-logging.basicConfig(filename='/home/sascha/bots/twitter_bot.log', level=logging.ERROR)
+logging.basicConfig(filename='/home/youruser/bots/twitter_bot.log', level=logging.ERROR)
 
 def delete_temp_files():
     folder_path = '/tmp'
