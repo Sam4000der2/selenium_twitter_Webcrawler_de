@@ -41,6 +41,14 @@ Dieser Bot ermöglicht das Crawlen von Twitter-Daten ohne die Verwendung der Twi
 - Bei Telegram bekommst du die API-Keys vom Account https://t.me/BotFather, dort kannst du deine Bots auch einstellen.
 - Für Mastodon bekommst du den API-Key unter `deine_Instant.bspw_social/settings/applications` (im Einstellungsmenü unter Entwicklung). Vergiss nicht, passende Rechte zu vergeben, sonst erhältst du schnell einen 403 Fehler. Für jede Änderung an den vergebenen Rechten musst du den API-Key neu generieren lassen. Vergiss auch nicht, deine Instanz ins Script einzutragen.
 
+Füge fürs das Testen dein Gemini API Key in die bashrc Datei.
+füge dazu einfach die Zeile in deine Datei hinzu
+`export GOOGLE_API_KEY="YOURAPIKEY"`
+Die Bashrc Dtaei öffnest du mit:
+`nano ~/.bashrc`
+
+Den API KEY von Gemini bekommt man kostenlos hier: https://aistudio.google.com/apikey . Die Nutzung ist auch kostenlos. 
+
 **Schritt 6:** Führe testweise im Ordner des Bots den Bot aus: `python twitter_bot.py`.
 
 - Im besten Fall wird das Modul selenium den passenden Geckodriver für Firefox automatisch installieren.
