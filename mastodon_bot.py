@@ -1,14 +1,28 @@
 import asyncio
-from mastodon import Mastodon
 import os
+import logging
 import requests
-from tempfile import NamedTemporaryFile
-from PIL import Image  # Correct import for PIL.Image
+from tempfile import NamedTemporaryFile  # nur einmal importieren
+from PIL import Image
+import io  # new import (if not already present)
+import cairosvg  # new import for SVG conversion
 
+import aiohttp
+import aiofiles
+
+from mastodon import Mastodon
 from google import genai
 
-import tempfile
-import cv2
+# Initialize the Google Gemini client with the API key
+client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+
+# Configure logging
+logging.basicConfig(
+    filename='/home/YOURUSER/bots/mastodon_logfile.log',
+    level=logging.ERROR,
+    format='%(asctime)s %(levelname)s:%(message)s'
+)
+print("Logging configured")
 
 instances = {
     'instance1': {'access_token': 'your_token', 'api_base_url': 'https://instance1.exempel.org'},
@@ -19,205 +33,189 @@ instances = {
 
 
 
+print("Instances configured")
+
 def post_tweet(mastodon, message, username, instance_name):
-    # Veröffentliche den Tweet auf Mastodon
+    # Kürze den Nachrichtentext entsprechend den Anforderungen
     message_cut = truncate_text(message)
 
-    if instance_name == "instance1":
-        try:
-            if any(substring in username for substring in ["Servicemeldung", "SBahnBerlin"]):
+    try:
+        if instance_name == "instance1":
+            if any(sub in username for sub in ["Servicemeldung", "SBahnBerlin"]):
                 mastodon.status_post(message_cut, visibility='public')
             else:
                 mastodon.status_post(message_cut, visibility='unlisted')
-        except Exception as e:
-            print(f"Fehler beim Posten auf instance1: {e}")
-    elif instance_name == "instance2":
-        try:
-            if any(substring in username for substring in ["Servicemeldung", "DB", "VBB", "bpol"]):
+        elif instance_name == "instance2":
+            if any(sub in username for sub in ["Servicemeldung", "DB", "VBB", "bpol"]):
                 mastodon.status_post(message_cut, visibility='public')
             else:
                 mastodon.status_post(message_cut, visibility='unlisted')
-        except Exception as e:
-            print(f"Fehler beim Posten auf instance2: {e}")
-    elif instance_name == "instance3":
-        try:
-            if any(substring in username for substring in ["Servicemeldung", "BVG"]):
+        elif instance_name == "instance3":
+            if any(sub in username for sub in ["Servicemeldung", "BVG"]):
                 mastodon.status_post(message_cut, visibility='public')
             else:
                 mastodon.status_post(message_cut, visibility='unlisted')
-        except Exception as e:
-            print(f"Fehler beim Posten auf instance3: {e}")
-    elif instance_name == "instance4":
-        try:
-            if any(substring in username for substring in ["Servicemeldung", "VIZ"]):
+        elif instance_name == "instance4":
+            if any(sub in username for sub in ["Servicemeldung", "VIZ"]):
                 mastodon.status_post(message_cut, visibility='public')
-        except Exception as e:
-            print(f"Fehler beim Posten auf instance4: {e}")
-    else:
-        print("Instanz nicht gefunden")
+        else:
+            logging.error("Instanz nicht gefunden")
+    except Exception as e:
+        logging.error(f"Fehler beim Posten auf {instance_name}: {e}")
 
-    
-    
 def truncate_text(text):
-    # Ersetze alle '@' Zeichen durch '#'
-    text = text.replace('@', '#')
-    # Entferne doppelte '#'
-    text = text.replace('##', '#')
+    # Ersetze alle '@' durch '#' und entferne doppelte '#'
+    text = text.replace('@', '#').replace('##', '#')
     text = text.replace('https://x.com', 'x')
-    # Prüfe, ob der Text länger als 500 Zeichen ist
-    if len(text) > 500:
-        return text[:500]
-    else:
-        return text
+    # Kürze den Text, wenn er länger als 500 Zeichen ist
+    return text[:500] if len(text) > 500 else text
 
-
-    
 def extract_hashtags(content, username):
-    # Entferne "@"-Symbol aus dem Benutzernamen, falls vorhanden
+    # Entferne ein eventuell vorhandenes führendes "@" aus dem Benutzernamen
     if username.startswith("@"):
         username = username[1:]
-    
-    # Suche nach Hashtags im Inhalt
     hashtags = ""
-    words = content.split()
-    for word in words:
+    for word in content.split():
         if word.startswith("#") and len(word) > 1:
-            word = word.replace('.', '')
-            word = word.replace(',', '')
-            word = word.replace(':', '')
-            word = word.replace(';', '')
-            hashtag_with_username = f"{word}_{username}"
-            hashtags += " " + hashtag_with_username
-            
+            word = word.replace('.', '').replace(',', '').replace(':', '').replace(';', '')
+            hashtags += f" {word}_{username}"
     return hashtags
 
-def upload_media(mastodon, images, username):
-    media_ids = []
-    
-    for image_link in images:
-        # Bild herunterladen und temporär speichern
-        with NamedTemporaryFile(delete=False) as tmp_file:
-            response = requests.get(image_link)
-            tmp_file.write(response.content)
-            image_path = tmp_file.name
-       
-        # Upscaling des Bildes mit OpenCV
-        image = cv2.imread(image_path)
-        
-        # Konvertiere das Bild in den erforderlichen Datentyp
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
-        upscaled_image = cv2.resize(image, None, fx=2, fy=2, interpolation=cv2.INTER_LINEAR)
+async def download_image(session, url):
+    try:
+        async with session.get(url) as response:
+            if response.status == 200:
+                # Erstelle einen temporären Pfad für das heruntergeladene Bild
+                temp_file_path = os.path.join('/tmp', os.path.basename(url))
+                async with aiofiles.open(temp_file_path, 'wb') as f:
+                    # Warten auf das vollständige Lesen der Bilddaten
+                    await f.write(await response.read())
+                return temp_file_path
+            else:
+                logging.error(f"Fehler beim Herunterladen des Bildes: {url}")
+                return None
+    except Exception as e:
+        logging.error(f"Fehler beim Herunterladen des Bildes: {e}")
+        return None
 
-        # Kontrastanpassung
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        image_contrast = clahe.apply(upscaled_image)
-
-        # Schärfen
-        image_sharpened = cv2.GaussianBlur(image_contrast, (0,0), 3)
-        image_sharpened = cv2.addWeighted(image_contrast, 1.5, image_sharpened, -0.5, 0)
-
-        # Speichern des hochskalierten und bearbeiteten Bildes im temporären Ordner
-        tmp_upscaled_path = os.path.join(os.path.dirname(image_path), 'upscaled_image.jpg')
-        cv2.imwrite(tmp_upscaled_path, image_sharpened)
-
-        client = genai.Client()  # Ensure the client is initialized correctly
-
+async def generate_alt_text(client, image_path):
+    try:
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-2.0-flash-exp',
             contents=[
                 'Bitte genieriere mir für das Bild einen Alternativ Text (auch Alt-text oder Bildbeschreibung genannt). Bitte sehr umfangreich, aber maximal 1500 Zeichen. Bitte antworte ausschliesslich mit dem Alternativ Text als Antwort.',
-                Image.open(tmp_upscaled_path)
+                Image.open(image_path)
             ]
         )
+        return response.text[:1500]
+    except Exception as e:
+        logging.error(f"Fehler beim Generieren des Alt-Texts: {e}")
+        return ""
 
-        # Textextraktion aus dem Bild
-        image_description = response.text
-        
-        if len(image_description) > 1500:
-            image_description = image_description[:1500]
-    
-        if "VIZ" in username:
-            # Media-Post mit Bildbeschreibung durchführen
-            try:
-                with open(image_path, 'rb') as image_file:
-                    media_info = mastodon.media_post(image_file, description=image_description, mime_type='image/jpeg')
-                    media_ids.append(media_info['id'])
-            except Exception as e:
-                print(f"Fehler beim Media-Post für VIZ: {e}")
-        else:
-            # Media-Post mit Bildbeschreibung durchführen
-            try:
-                with open(image_path, 'rb') as image_file:
-                    media_info = mastodon.media_post(image_file, description=image_description, mime_type='image/jpeg')
-                    media_ids.append(media_info['id'])
-            except Exception as e:
-                print(f"Fehler beim Media-Post: {e}")
+def prepare_image_for_upload(orig_image_bytes, ext):
+    """
+    Convert and process the image so it is in JPG/PNG format,
+    resized to max 1280px and compressed below 8MB.
+    """
+    if ext == '.svg':
+        orig_image_bytes = cairosvg.svg2png(bytestring=orig_image_bytes)
+    elif ext not in ['.jpg', '.jpeg', '.png']:
+        with Image.open(io.BytesIO(orig_image_bytes)) as img:
+            output_io = io.BytesIO()
+            img.convert('RGB').save(output_io, format='JPEG')
+            orig_image_bytes = output_io.getvalue()
+    processed_bytes = process_image_for_mastodon(orig_image_bytes)
+    return processed_bytes
 
-    
-        # Temporäre Datei löschen
-        os.unlink(image_path)
-        os.unlink(tmp_upscaled_path)
-    
+async def upload_media(mastodon, images, username):
+    media_ids = []
+    async with aiohttp.ClientSession() as session:
+        for image_link in images:
+            # Download image if not local
+            if os.path.isfile(image_link):
+                image_path = image_link
+            else:
+                image_path = await download_image(session, image_link)
+            if image_path:
+                try:
+                    # Read the original image bytes.
+                    async with aiofiles.open(image_path, 'rb') as image_file:
+                        orig_image_bytes = await image_file.read()
+                    ext = os.path.splitext(image_path)[1].lower()
+                    # Process image once for both Gemini and Mastodon.
+                    processed_bytes = prepare_image_for_upload(orig_image_bytes, ext)
+                    # Write processed bytes to a temporary file.
+                    temp_file = NamedTemporaryFile(delete=False, suffix=".jpg")
+                    temp_file.write(processed_bytes)
+                    temp_file.close()
+                    # Generate alt text using the converted image.
+                    image_description = await generate_alt_text(client, temp_file.name)
+                    # Upload processed image to Mastodon.
+                    media_info = await asyncio.to_thread(
+                        mastodon.media_post,
+                        io.BytesIO(processed_bytes),
+                        description=image_description,
+                        mime_type='image/jpeg'
+                    )
+                    media_ids.append(media_info['id'])
+                except Exception as e:
+                    logging.error(f"Fehler beim Media-Post: {e}")
+                finally:
+                    # Delete temporary files.
+                    if 'temp_file' in locals() and os.path.isfile(temp_file.name):
+                        os.remove(temp_file.name)
+                    if (not os.path.isfile(image_link)) and os.path.isfile(image_path):
+                        os.remove(image_path)
+            else:
+                logging.error("Kein Bildpfad erhalten, überspringe dieses Bild.")
     return media_ids
 
-
-def post_tweet_with_images(mastodon, message, images, username, instance_name):
+async def post_tweet_with_images(mastodon, message, images, username, instance_name):
     try:
-        media_ids = upload_media(mastodon, images, username)
+        media_ids = await upload_media(mastodon, images, username)
     except Exception as e:
-        print(f"Fehler beim Hochladen der Medien: {e}")
+        logging.error(f"Fehler beim Hochladen der Medien: {e}")
         return
 
     try:
         message_cut = truncate_text(message)
     except Exception as e:
-        print(f"Fehler beim Kürzen der Nachricht: {e}")
+        logging.error(f"Fehler beim Kürzen der Nachricht: {e}")
         return
 
     try:
         if instance_name == "instance1":
-            try:
-                if "SBahnBerlin" in username:
-                    mastodon.status_post(message_cut, media_ids=media_ids, visibility='public')
-                else:
-                    mastodon.status_post(message_cut, media_ids=media_ids, visibility='unlisted')
-            except Exception as e:
-                print(f"Fehler beim Posten auf instance1: {e}")
+            if "SBahnBerlin" in username:
+                await mastodon.status_post(message_cut, media_ids=media_ids, visibility='public')
+            else:
+                await mastodon.status_post(message_cut, media_ids=media_ids, visibility='unlisted')
         elif instance_name == "instance2":
-            try:
-                mastodon.status_post(message_cut, media_ids=media_ids, visibility='unlisted')
-            except Exception as e:
-                print(f"Fehler beim Posten auf instance2: {e}")
+            await mastodon.status_post(message_cut, media_ids=media_ids, visibility='unlisted')
         elif instance_name == "instance3":
-            try:
-                if "BVG" in username:
-                    mastodon.status_post(message_cut, media_ids=media_ids, visibility='public')
-                else:
-                    mastodon.status_post(message_cut, media_ids=media_ids, visibility='unlisted')
-            except Exception as e:
-                print(f"Fehler beim Posten auf instance3: {e}")
+            if "BVG" in username:
+                await mastodon.status_post(message_cut, media_ids=media_ids, visibility='public')
+            else:
+                await mastodon.status_post(message_cut, media_ids=media_ids, visibility='unlisted')
         elif instance_name == "instance4":
-            try:
-                if "VIZ" in username:
-                    mastodon.status_post(message_cut, media_ids=media_ids, visibility='public')
-            except Exception as e:
-                print(f"Fehler beim Posten auf instance4: {e}")
+            if "VIZ" in username:
+                await mastodon.status_post(message_cut, media_ids=media_ids, visibility='public')
+            else:
+                logging.error("Keine gültige Bedingung für instance4 gefunden.")
         else:
-            print("Instanz nicht gefunden")
+            logging.error("Instanz nicht gefunden")
     except Exception as e:
-        print(f"Allgemeiner Fehler: {e}")
+        logging.error(f"Allgemeiner Fehler beim Posten mit Bildern: {e}")
 
-        
-
-
-def main(new_tweets):
+async def main(new_tweets):
+    print("Entering main function")
+    # Iteriere über alle konfigurierten Instanzen
     for instance_name, instance in instances.items():
         try:
             access_token = instance['access_token']
             api_base_url = instance['api_base_url']
+            print(f"Processing instance: {instance_name}")
         except KeyError as e:
-            print(f"Fehler beim Zugriff auf die Instanz-Parameter für {instance_name}: {e}")
+            logging.error(f"Fehler beim Zugriff auf die Instanz-Parameter für {instance_name}: {e}")
             continue
 
         try:
@@ -225,35 +223,35 @@ def main(new_tweets):
                 access_token=access_token,
                 api_base_url=api_base_url
             )
-
-            for n, tweet in enumerate(new_tweets, start=1):
-                user = tweet['user']
-                username = tweet['username']
-                content = tweet['content']
-                posted_time = tweet['posted_time']
-                var_href = tweet['var_href']
-
-                images = tweet['images']
-                extern_urls = tweet['extern_urls']
-                images_as_string = tweet['images_as_string']
-                extern_urls_as_string = tweet['extern_urls_as_string']
-
-                hashtags = extract_hashtags(content, username)
-                message = f"#{username}:\n\n{content}\n\n#öpnv_berlin_bot\n\nsrc: {var_href}\n{extern_urls_as_string}\n{posted_time}"
-
-                if not images:
-                    post_tweet(mastodon, message, username, instance_name)
-                else:
-                    post_tweet_with_images(mastodon, message, images, username, instance_name)
-
+            print(f"Created Mastodon object for {instance_name}")
         except Exception as e:
-            print(f"Fehler beim Erstellen des Mastodon-Objekts für {instance_name}: {e}")
+            logging.error(f"Fehler beim Erstellen des Mastodon-Objekts für {instance_name}: {e}")
             continue
-        
 
+        for n, tweet in enumerate(new_tweets, start=1):
+            user = tweet['user']
+            username = tweet['username']
+            content = tweet['content']
+            posted_time = tweet['posted_time']
+            var_href = tweet['var_href']
 
-# Hauptprogramm (z.B. wo der Twitter-Bot aufgerufen wird)
-if __name__ == "__main__":
-    # Example usage of main function
-    new_tweets = []  # Placeholder for new tweets
-    asyncio.run(main(new_tweets))
+            images = tweet['images']
+            extern_urls = tweet['extern_urls']
+            # images_as_string und extern_urls_as_string sind vorhanden, werden hier aber nicht weiterverwendet
+            hashtags = extract_hashtags(content, username)
+            # Erstelle die Nachricht mit zusätzlichen Informationen
+            message = (
+                f"#{username}:\n\n{content}\n\n#öpnv_berlin_bot\n\n"
+                f"src: {var_href}\n{extern_urls}\n{posted_time}"
+            )
+
+            if not images:
+                print(f"Posting tweet without images for {username}")
+                post_tweet(mastodon, message, username, instance_name)
+            else:
+                print(f"Posting tweet with images for {username}")
+                await post_tweet_with_images(mastodon, message, images, username, instance_name)
+
+    print("Main function completed")
+
+print("Script loaded")
