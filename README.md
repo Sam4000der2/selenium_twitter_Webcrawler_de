@@ -44,7 +44,7 @@ Dieser Bot ermöglicht das Crawlen von Twitter-Daten ohne die Verwendung der Twi
 **Schritt 6:** Führe testweise im Ordner des Bots den Bot aus: `python twitter_bot.py`.
 
 - Im besten Fall wird das Modul selenium den passenden Geckodriver für Firefox automatisch installieren.
-- Falls nicht: Lade die passende Geckodriver-Version herunter (Linux, Windows, Mac, Arm Linux: [https://github.com/mozilla/geckodriver/releases](https://github.com/mozilla/geckodriver/releases). Entpacke den Geckodriver und kopiere ihn aus den geöffneten Ordner mit dem Befehl `sudo cp geckodriver /usr/local/bin/geckodriver` in den passenden Ordner.
+- Falls nicht: Lade die passende Geckodriver-Version herunter (x64: [https://github.com/mozilla/geckodriver/releases](https://github.com/mozilla/geckodriver/releases) bzw. arm: [https://github.com/jamesmortensen/geckodriver-arm-binaries/releases](https://github.com/jamesmortensen/geckodriver-arm-binaries/releases)). Entpacke den Geckodriver und kopiere ihn aus den geöffneten Ordner mit dem Befehl `sudo cp geckodriver /usr/local/bin/geckodriver` in den passenden Ordner.
 
 **Schritt 7:** Falls du den Telegram Bot nutzt, füge auch im `telegram_controll_bot.py` den API-Key hinzu. Am besten statt `DATA_FILE = 'data.json'` eine absolute Pfadangabe zu deinem Botordner verwenden, vergiss dann nicht, dies auch in `telegram_bot.py` zu ändern.
 
@@ -58,68 +58,23 @@ Description=twitter_bot
 After=network.target
 
 [Service]
-WorkingDirectory=/[Ordnerpfad zu deinem Botordner]
-ExecStart=python3 twitter_bot.py
+Environment="GEMINI_API_KEY=YOURAPIKEY"
+WorkingDirectory=/home/YOURUSER/bots
+ExecStart=/home/YOURUSER/bots/venv/bin/python3 /home/YOURUSER/bots/twitter_bot.>
 Restart=always
 RestartSec=10
+User=YOURUSER
+Group=YOURUSER
 
 [Install]
 WantedBy=multi-user.target
 ```
-
+Wichtig, passe "YOURUSER" und "YOURAPIKEY" . Den API KEY von Gemini bekommt man kostenlos hier: https://aistudio.google.com/apikey . Die Nutzung ist auch kostenlos. 
 - `sudo systemctl daemon-reload`
 - `sudo systemctl start twitter_bot.service`
 - `sudo systemctl enable twitter_bot.service`
 - Mache es mit dem `telegram_controll_bot` analog.
 
 **Schritt 9:** Herzlichen Glückwunsch, der Bot sollte nun laufen.
-
-**Schritt 10:** Falls gewünscht eine RAM Disc anlegen.
-
-Eine RAM-Disk kann für temporäre Dateien in `/tmp` und `/var/tmp` verwendet werden, um die Geschwindigkeit zu erhöhen und die Festplatte/SSD/Speicherkarte zu schonen. Gerade da der Bug mit den andauernde Kopien anlegen des Firefox Profils noch nicht gelöst ist.
-
-**Schritt 11:** RAM-Disk-Größe festlegen
-
-Entscheide, wie viel Speicherplatz du der RAM-Disk zuweisen möchtest. In diesem Beispiel verwenden wir jeweils 1 1/2 GB für `/tmp` und `/var/tmp`.
-
-**Schritt 12:** RAM-Disk einrichten
-
-Öffne ein Terminal und führe die folgenden Befehle aus:
-
-```bash
-sudo mount -t tmpfs -o size=1536M tmpfs /tmp
-sudo mount -t tmpfs -o size=1536M tmpfs /var/tmp
-```
-
-Dies erstellt separate RAM-Disks für `/tmp` und `/var/tmp` mit jeweils 1 1/2 GB Größe.
-
-**Schritt 13:** Automatisches Einhängen der RAM-Disks
-
-Um sicherzustellen, dass die RAM-Disks beim Start automatisch eingehängt werden, bearbeite die Datei `/etc/fstab`:
-
-```bash
-sudo nano /etc/fstab
-```
-
-Füge die folgenden Zeilen am Ende der Datei hinzu:
-
-```
-tmpfs   /tmp   tmpfs   size=1536M   0   0
-tmpfs   /var/tmp   tmpfs   size=1536M   0   0
-```
-
-Speichere und schließe die Datei.
-
-**Schritt 14:** Neustart des Systems
-
-Starte dein System neu, um sicherzustellen, dass die Änderungen wirksam werden:
-
-```bash
-sudo reboot
-```
-
-Nach diesen Schritten sollten separate RAM-Disks für `/tmp` und `/var/tmp` mit jeweils 1 1/2 GB Größe eingerichtet sein und automatisch beim Start des Systems gemountet werden.
-
----
 
 Vielen Dank an [https://github.com/shaikhsajid1111/twitter-scraper-selenium/blob/main/twitter_scraper_selenium/element_finder.py](https://github.com/shaikhsajid1111/twitter-scraper-selenium/blob/main/twitter_scraper_selenium/element_finder.py), dank diesem Projekt bin ich an die CSS-Sektoren gekommen, um die Tweets zu erhalten. Das Projekt eignet sich als Fertiglösung für Anfänger, die nur Profile crawlen wollen. Diese sind jedoch inzwischen oft nicht mehr chronologisch sortiert. Deshalb mein Ansatz mit den Twitterlisten und mehr Freiheit der Twitterseiten.
