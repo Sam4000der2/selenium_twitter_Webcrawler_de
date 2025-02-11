@@ -20,7 +20,7 @@ Hier findest du eine verbesserte und übersichtlichere Version deiner README-Dat
   Chrome funktioniert grundsätzlich mit Selenium, jedoch kann die Integration instabiler sein.
 
 - **Anmeldung bei Twitter:**  
-  Für die Nutzung von Twitter-Listen muss man angemeldet sein. Diese bieten als einzige verlässlich chronologische Ansichten. Am besten über ein neues Profil in Firefox bei Twitter Anmelden und dieses Profil dann auf den Zielserver (inkl Raspberry PI und Co) kopieren. Der Pfad zum Profil enstprechend im Scrpt anpassen. Unter Firefox findet man das Profile mit dem aufrufen von `about:profiles`
+  Für die Nutzung von Twitter-Listen muss man angemeldet sein. Diese bieten als einzige verlässlich chronologische Ansichten. Am besten über ein neues Profil in Firefox bei Twitter Anmelden und dieses Profil dann auf den Zielserver (inkl Raspberry PI und Co) kopieren. Der Pfad zum Profil enstprechend im Scrpt anpassen. Unter Firefox findet man das Profile mit dem aufrufen von `about:profiles`. Der Bot funktioniert aber auch ohne Anmeldung, dann muss die Seite aber öffentlich ohne Anmeldung erreichbar sein.
 
 ---
 
