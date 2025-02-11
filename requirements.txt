@@ -5,3 +5,7 @@ mastodon.py
 selenium
 pytz
 opencv-python
+asyncio
+aiohttp
+aiofiles
+cairosvg
