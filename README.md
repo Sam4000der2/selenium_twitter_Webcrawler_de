@@ -1,7 +1,3 @@
-Hier findest du eine verbesserte und übersichtlichere Version deiner README-Datei:
-
----
-
 # Selenium Twitter Webcrawler – Deutsche Version
 
 [**Zur englischen Version**](https://github.com/Sam4000der2/selenium_twitter_Webcrawler_en)
