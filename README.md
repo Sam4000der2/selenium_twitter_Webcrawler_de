@@ -60,7 +60,7 @@ After=network.target
 [Service]
 Environment="GEMINI_API_KEY=YOURAPIKEY"
 WorkingDirectory=/home/YOURUSER/bots
-ExecStart=/home/YOURUSER/bots/venv/bin/python3 /home/YOURUSER/bots/twitter_bot.>
+ExecStart=/home/YOURUSER/bots/venv/bin/python3 /home/YOURUSER/bots/twitter_bot.py
 Restart=always
 RestartSec=10
 User=YOURUSER
