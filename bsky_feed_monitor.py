@@ -7,6 +7,7 @@ import logging
 import asyncio
 import hashlib
 import tempfile
+import re
 
 import feedparser
 from dateutil.parser import parse
@@ -44,6 +45,10 @@ FEEDS = [
 # Grundeinstellungen zur History-Größe (kann in FEEDS per "max_entries" pro Feed überschrieben werden)
 MIN_KEEP = 20        # mindestens so viele IDs behalten (falls Feed sehr klein ist)
 MAX_KEEP_CAP = 1000  # absolute Obergrenze
+
+PLACEHOLDER_MARKERS = [
+    "[contains quote post or other embedded content]"
+]
 
 # -------------------------
 # Hilfsfunktionen: Lesen/Schreiben (eine URL pro Zeile)
@@ -127,6 +132,18 @@ def _get_parsed_time(item):
             return None
     return None
 
+
+def clean_description(desc: str) -> str:
+    """
+    Entfernt bekannte Platzhalter-Texte und normalisiert Zeilenumbrüche.
+    """
+    text = (desc or "").replace("\r\n", "\n")
+    for marker in PLACEHOLDER_MARKERS:
+        text = text.replace(marker, "")
+    # Doppelte Leerzeilen auf maximal zwei begrenzen
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
 # -------------------------
 # Feed Parsing: Link-basiert + Startup 30min logic
 # -------------------------
@@ -196,7 +213,7 @@ def parse_feed(feed_config):
                     "guid": item.get("guid") or item.get("id") or "",
                     "link": item.get("link", ""),
                     "title": item.get("title", ""),
-                    "description": item.get("description", "") or item.get("summary", ""),
+                    "description": clean_description(item.get("description", "") or item.get("summary", "")),
                     "pubDate": item.get("published") or item.get("updated") or "",
                     "feed_name": feed_name
                 }
@@ -243,13 +260,14 @@ def format_post_date(timestamp):
 def format_entry(entry):
     """Formatiert einen Eintrag für die Ausgabe."""
     pub = entry.get('pubDate', '')
+    description = clean_description(entry.get('description', ''))
     try:
         posted_time = format_post_date(pub) if pub else pub
     except Exception:
         posted_time = pub or ""
     return f"""
 Neuer Eintrag von {entry.get('feed_name', 'Unbekannt')}:
-{entry.get('description', '')}
+{description}
 
 Veröffentlicht am: {posted_time}
 Link: {entry.get('link', '')}
@@ -273,11 +291,12 @@ def check_all_feeds():
             for entry in new_entries:
                 formatted_entry = format_entry(entry)
                 user = entry["feed_name"].replace(' ', '_')
+                description = clean_description(entry.get("description", ""))
                 posted_time = format_post_date(entry.get("pubDate", ""))  # Zeitformatierung vornehmen
                 tweet_data.append({
                     "user": user,
                     "username": user,
-                    "content": entry.get("description", ""),
+                    "content": description,
                     "posted_time": posted_time,
                     "var_href": entry.get("link", ""),
                     "images": None,

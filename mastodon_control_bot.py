@@ -937,7 +937,7 @@ def build_status_text() -> str:
 # ----------------------------
 def send_dm(mastodon, acct: str, in_reply_to_id, text: str, include_tagging_hint: bool = True):
     prefix = f"@{normalize_acct(acct)} "
-    max_len = max(1, MASTODON_DM_MAX - len(prefix))
+    base_max = max(1, MASTODON_DM_MAX - len(prefix))
     reply_to = in_reply_to_id
     tagging_hint = ""
     if include_tagging_hint:
@@ -946,16 +946,24 @@ def send_dm(mastodon, acct: str, in_reply_to_id, text: str, include_tagging_hint
         except Exception:
             tagging_hint = ""
 
-    parts = split_mastodon_text(text, max_len=max_len)
+    # Suffix wird nur beim letzten Chunk angehängt; stelle sicher, dass auch dann das Limit eingehalten wird.
+    suffix = f"\n\n(Aktuelle Antwortzeit: ca. {POLL_INTERVAL_SEC} Sekunden)"
+    if tagging_hint:
+        suffix += f"\n{tagging_hint}"
+
+    # Falls das Suffix länger als der verfügbare Platz ist, kürzen (sollte praktisch nie vorkommen).
+    if len(suffix) >= base_max:
+        suffix = suffix[: max(0, base_max - 1)]
+
+    final_max = max(1, base_max - len(suffix))
+    safe_max = min(base_max, final_max)
+
+    parts = split_mastodon_text(text, max_len=safe_max)
     total = len(parts)
 
     for idx, part in enumerate(parts):
-        suffix = ""
-        if idx == total - 1:
-            suffix = f"\n\n(Aktuelle Antwortzeit: ca. {POLL_INTERVAL_SEC} Sekunden)"
-            if tagging_hint:
-                suffix += f"\n{tagging_hint}"
-        body = f"{prefix}{part}{suffix}"
+        part_suffix = suffix if idx == total - 1 else ""
+        body = f"{prefix}{part}{part_suffix}"
         try:
             status = mastodon.status_post(
                 body,
