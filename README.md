@@ -1,179 +1,67 @@
-# Selenium Twitter Webcrawler – Deutsche Version
+# ÖPNV Social Bots (Twitter/X & Bluesky → Telegram/Mastodon)
 
-[**Zur englischen Version**](https://github.com/Sam4000der2/selenium_twitter_Webcrawler_en)
+Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Selenium-Webdriver) und Bluesky-RSS-Feeds abholen und an Telegram sowie mehrere Mastodon-Instanzen ausliefern. Alt-Texte werden automatisch über Google Gemini generiert; Filter/Tagging lassen sich per Control-Bots steuern.
 
----
+## Komponenten
+- `twitter_bot.py`: Selenium-Scraper für eine X-Liste. Nutzt ein lokales Firefox-Profil, dedupliziert über `existing_tweets.txt` und sendet neue Tweets an Telegram und Mastodon.
+- `bsky_feed_monitor.py`: Pollt konfigurierte Bluesky-RSS-Feeds (z. B. VIZ Berlin) und leitet neue Einträge an Telegram/Mastodon weiter.
+- `telegram_bot.py`: Versendet Tweets/Feeds an alle in `data.json` hinterlegten Chats. Filterwörter pro Chat bestimmen, was zugestellt wird.
+- `telegram_control_bot.py`: Telegram-Bot zur Verwaltung von Chat-IDs und Filtern (`/start`, `/status`, `/addfilterrules`, `/deletefilterrules`, `/deleteallrules`, `/list`, `/about`, `/datenschutz`). Admin-Kommandos erlauben Service-Meldungen an alle Kanäle und Log-Auszüge.
+- `mastodon_bot.py`: Postet Tweets/Feeds auf `berlin.social`, `toot.berlin` und `mastodon.berlin` (Tokens aus ENV). Unterstützt Bilder/Videos, generiert Alt-Texte via Gemini und taggt Nutzer basierend auf `mastodon_rules.json`.
+- `mastodon_control_bot.py`: Mastodon-DM-Bot zum Verwalten der Tagging-Regeln (`/start`, `/add`, `/list`, `/overview`, `/delete`, `/pause`, `/resume`, `/schedule`, `/stop`). Lauscht optional auf Events vom Posting-Bot.
+- `gemini_helper.py` + `test_alt_text.py`: Modellverwaltung für Gemini (Cache in `gemini_models.csv`) und Offline/Online-Test der Alt-Text-Generierung (`python test_alt_text.py --image <pfad> [--dummy]`).
+- Daten/Logs: `data.json` (Telegram-Chat-IDs & Filter), `mastodon_rules.json` (Tagging-Regeln), `viz_berlin_entries.txt` und `existing_tweets.txt` (History), Log unter `/home/sascha/bots/twitter_bot.log`.
 
-## Wichtige Hinweise
+## Voraussetzungen
+- Python 3 + virtuelles Environment (empfohlen: `/home/sascha/bots/venv`; aktivieren mit `source /home/sascha/bots/venv/bin/activate`).
+- Abhängigkeiten installieren: `pip install -r requirements.txt`
+- Firefox + Geckodriver (in `twitter_bot.py` aktuell `/usr/local/bin/geckodriver`). Nutze ein eingeloggtes Firefox-Profil für X (`firefox_profile_path`).
+- Netz- und API-Zugänge per Environment:
+  - Telegram: `telegram_token`, `telegram_admin`
+  - Mastodon: `opnv_berlin`, `opnv_toot`, `opnv_mastodon`
+  - Gemini: `GEMINI_API_KEY`
+  - Optional: `MASTODON_CONTROL_EVENT_ENABLED|HOST|PORT`, `MASTODON_CONTROL_POLL_INTERVAL`
 
-- **Snap-Pakete:**  
-  Selenium unterstützt offenbar keine Snap-Pakete. Verwende daher **nicht** die Ubuntu-Distribution in Kombination mit diesem Projekt – Mint und Debian haben sich bewährt.
+> Hinweis: Alle Skripte verwenden absolute Pfade auf `/home/sascha/bots/…`. Wenn das Repo anders liegt, passe die Konstanten (`firefox_profile_path`, `geckodriver_path`, `filename`, `DATA_FILE`, `RULES_FILE`, Log-Pfade) in den Skripten an.
 
-- **Firefox via Flatpak:**  
-  Die Nutzung von Firefox über Flatpak wurde in Verbindung mit diesem Projekt nicht getestet.
+## Konfiguration
+- **Twitter/X-Scraper (`twitter_bot.py`)**
+  - `twitter_link` auf die gewünschte Liste/Account setzen.
+  - Firefox-Profil (`firefox_profile_path`) und Geckodriver-Pfad konfigurieren. Läuft headless und pollt alle 60 s.
+  - Neue Links landen in `existing_tweets.txt`; `var_href` wird beim Telegram-Versand auf `nitter.net` umgeschrieben.
+  - Kurz-URLs werden erweitert; Bilder/Videos und externe Links gehen an Mastodon weiter.
 
-- **Google Chrome:**  
-  Chrome funktioniert grundsätzlich mit Selenium, jedoch kann die Integration instabiler sein.
+- **Bluesky-Feeds (`bsky_feed_monitor.py`)**
+  - FEEDS-Liste anpassen (`name`, `url`, `file`, optional `max_entries`). History pro Feed wird in der jeweiligen Datei gehalten.
+  - Pollt alle 60 s und nutzt dieselben Bot-Module für die Auslieferung.
 
-- **Anmeldung bei Twitter:**  
-  Für die Nutzung von Twitter-Listen muss man angemeldet sein. Diese bieten als einzige verlässlich chronologische Ansichten. Am besten über ein neues Profil in Firefox bei Twitter Anmelden und dieses Profil dann auf den Zielserver (inkl Raspberry PI und Co) kopieren. Der Pfad zum Profil enstprechend im Scrpt anpassen. Unter Firefox findet man das Profile mit dem aufrufen von `about:profiles`. Der Bot funktioniert aber auch ohne Anmeldung, dann muss die Seite aber öffentlich ohne Anmeldung erreichbar sein.
+- **Telegram**
+  - `data.json` legt `chat_ids` und `filter_rules` ab; wird vom Control-Bot gepflegt.
+  - `telegram_bot.py` verschickt Nachrichten an alle Chat-IDs; Filterwörter pro Chat entscheiden über Zustellung.
+  - `telegram_control_bot.py` bietet Nutzer-Kommandos (Start/Stop/Status/Filter) und Admin-Kommandos (Service-Meldungen, Log-Fehler/Warnungen).
 
----
+- **Mastodon**
+  - Tokens aus ENV; je Instanz wird Sichtbarkeit anhand bekannter Accounts gewählt.
+  - Alt-Texte pro Bild/Video via Gemini (Fallback-Text bei Fehlern); Modelle werden gecached und Quoten respektiert.
+  - Tagging-Regeln aus `mastodon_rules.json` (DM/Tag, Zeitfenster, Block-/Allow-Keywords). Verwaltung erfolgt über den Mastodon-Control-Bot.
+  - Event-Brücke: `mastodon_bot` kann nach erfolgreichem Post per TCP an `MASTODON_CONTROL_EVENT_HOST:PORT` senden, damit `mastodon_control_bot` Status-Updates sieht.
 
-## Übersicht
+## Starten
+1) Virtuelle Umgebung aktivieren:  
+   `source /home/sascha/bots/venv/bin/activate`
 
-Dieses Projekt ermöglicht das Crawlen von Twitter-Daten **ohne** die offizielle Twitter-API zu nutzen. Alle gefundenen Tweets werden automatisch über zwei Module weitergeleitet:
+2) Bots starten (je nach Bedarf separate Prozesse/Services):
+   - X-Scraper: `python twitter_bot.py`
+   - Bluesky-Feeds: `python bsky_feed_monitor.py`
+   - Telegram-Control: `python telegram_control_bot.py`
+   - Mastodon-Control: `python mastodon_control_bot.py`
 
-- **Telegram Bot:**  
-  Zusätzlich mit optionaler Filterung (z. B. nach bestimmten Stichwörtern, Linien oder Orten).
+3) Alt-Texte testen (ohne Posten):  
+   `python test_alt_text.py --dummy` (offline) oder `python test_alt_text.py --image <pfad>` mit gesetztem `GEMINI_API_KEY`.
 
-- **Mastodon Bot:**  
-  Einfache Weiterleitung der Tweets an Mastodon.
+## Logging, Daten & Betrieb
+- Zentrales Log: `/home/sascha/bots/twitter_bot.log` (alle Module). Admin-Befehle in Telegram zeigen Auszüge.
+- Historien/Caches werden automatisch geschrieben: `existing_tweets.txt`, `viz_berlin_entries.txt`, `gemini_models.csv`, `mastodon_rules.json`, `data.json`.
+- Für Dauerbetrieb können systemd-Services genutzt werden (ExecStart z. B. `/home/sascha/bots/venv/bin/python /home/sascha/bots/twitter_bot.py`; ENV-Variablen im Service setzen).
 
-Zudem gibt es einen **Control-Bot** für Telegram, mit dem du Chat-IDs und Filterbegriffe verwalten und den Bot bedienen kannst.
-
----
-
-## Installation & Konfiguration
-
-### Voraussetzungen
-
-- **Python** (inklusive pip)
-- Folgende Python-Module (über pip installierbar):
-  - siehe requirements.txt
-
-### Schritt-für-Schritt-Anleitung
-
-#### 1. Python und benötigte Module installieren
-
-Stelle sicher, dass Python samt pip installiert ist. Installiere dann die erforderlichen Module:
-```bash
-pip install -r requirements.txt
-```
-
-#### 2. Anpassung für öffentlich zugängliche Twitter-Daten (ohne Login)
-
-Falls du Twitter-Daten ohne Login crawlen möchtest, nimm in der Datei `twitter_bot.py` folgende Änderungen vor:
-
-- **Auskommentieren:**
-  ```python
-  # firefox_profile = webdriver.FirefoxProfile(firefox_profile_path)
-  # firefox_options.profile = firefox_profile
-  ```
-- **In der `def main()`-Funktion:**
-  - Entferne den Kommentar von:
-    ```python
-    driver = webdriver.Firefox(options=firefox_options)
-    ```
-  - Kommentiere stattdessen:
-    ```python
-    # driver = webdriver.Firefox(options=firefox_options, firefox_profile=firefox_profile_path)
-    ```
-- **Zusätzlich:**  
-  Kommentiere auch die Funktion `delete_temp_files()` aus, da sie in diesem Modus vermutlich nicht benötigt wird.
-
-#### 3. Zugriff auf nicht öffentliche Twitter-Seiten (z. B. chronologisch sortierte Listen)
-
-- Passe in der Datei `twitter_bot.py` den Wert von `firefox_profile_path` an, um auf geschützte oder personalisierte Seiten zugreifen zu können.
-- Deinen Profilnamen findest du unter `about:profiles` in Firefox.
-
-#### 4. Zielseiten und Modul-Auswahl
-
-- **Twitter-Seiten hinzufügen:**  
-  Trage in `twitter_bot.py` die Twitter-Seite ein, deren Tweets du erfassen möchtest.
-- **Unnötige Module deaktivieren:**  
-  Kommentiere in der `def main()` die Aufrufe des Telegram- bzw. Mastodon-Bots aus, wenn du einen der Dienste nicht benötigst:
-  ```python
-  # await telegram_bot.main(new_tweets)
-  # mastodon_bot.main(new_tweets)
-  ```
-
-#### 5. API-Schlüssel einrichten
-
-- **Telegram:**  
-  Hole deine API-Schlüssel über [BotFather](https://t.me/BotFather) und füge diese in den entsprechenden Dateien ein.
-
-- **Mastodon:**  
-  Den API-Schlüssel findest du unter den Einstellungen deiner Instanz (im Bereich **Entwicklung**). Achte darauf, dass die erforderlichen Rechte vergeben sind – bei Änderungen musst du den API-Key neu generieren. Vergiss nicht, deine Instanz auch im Script anzugeben. Außerdem wird über die Gemini-API kostenlos Alt-Texte für die Bilder geniert. 
-
-- **Gemini API (Testzwecke):**  
-  Füge deinen Gemini API-Key in deine `~/.bashrc` ein. Öffne die Datei mit:
-  ```bash
-  nano ~/.bashrc
-  ```
-  und füge die Zeile hinzu:
-  ```bash
-  export GOOGLE_API_KEY="YOURAPIKEY"
-  ```
-  Deinen kostenlosen Gemini API-Key erhältst du hier: [Gemini API Key](https://aistudio.google.com/apikey).
-
-#### 6. Testausführung des Bots
-
-Führe den Bot im entsprechenden Verzeichnis testweise aus:
-```bash
-python twitter_bot.py
-```
-- **Hinweis:**  
-  Selenium versucht in der Regel, den passenden Geckodriver für Firefox automatisch zu installieren. Sollte dies nicht funktionieren, lade den Geckodriver manuell herunter:
-  - **x64 & ARM:** [Geckodriver Releases](https://github.com/mozilla/geckodriver/releases)
-  
-  Entpacke den Geckodriver und kopiere ihn in das Systemverzeichnis:
-  ```bash
-  sudo cp geckodriver /usr/local/bin/geckodriver
-  ```
-
-#### 7. Konfiguration des Telegram Control Bots
-
-Falls du den Telegram Bot nutzt, füge in `telegram_controll_bot.py` deinen API-Schlüssel hinzu.  
-Es wird empfohlen, statt `DATA_FILE = 'data.json'` einen absoluten Pfad zu verwenden – vergiss nicht, diese Änderung auch in `telegram_bot.py` zu übernehmen.
-
-#### 8. Bots als Service einrichten
-
-Um den Bot dauerhaft im Hintergrund laufen zu lassen, richte ihn als Systemdienst ein:
-
-1. Erstelle eine Service-Datei:
-   ```bash
-   sudo nano /etc/systemd/system/twitter_bot.service
-   ```
-2. Füge folgenden Inhalt ein und passe `YOURUSER` sowie `YOURAPIKEY` an:
-   ```ini
-   [Unit]
-   Description=twitter_bot
-   After=network.target
-
-   [Service]
-   Environment="GEMINI_API_KEY=YOURAPIKEY"
-   WorkingDirectory=/home/YOURUSER/bots
-   ExecStart=/home/YOURUSER/bots/venv/bin/python3 /home/YOURUSER/bots/twitter_bot.py
-   Restart=always
-   RestartSec=10
-   User=YOURUSER
-   Group=YOURUSER
-
-   [Install]
-   WantedBy=multi-user.target
-   ```
-3. Lade die Systemdienste neu:
-   ```bash
-   sudo systemctl daemon-reload
-   ```
-4. Starte und aktiviere den Service:
-   ```bash
-   sudo systemctl start twitter_bot.service
-   sudo systemctl enable twitter_bot.service
-   ```
-5. Richte den `telegram_controll_bot` analog ein.
-
-#### 9. Abschluss
-
-Herzlichen Glückwunsch – der Bot sollte nun erfolgreich laufen!
-
----
-
-## Danksagung
-
-Ein besonderer Dank geht an [shaikhsajid1111](https://github.com/shaikhsajid1111/twitter-scraper-selenium/blob/main/twitter_scraper_selenium/element_finder.py). Dank dieses Projekts konnte ich an die Verwendung von CSS-Selektoren herankommen, um Tweets zu extrahieren. Dieses Projekt eignet sich vor allem für Anfänger, die Profile crawlen möchten – auch wenn die chronologische Sortierung oft nicht mehr gegeben ist. Mit meinem Ansatz über Twitter-Listen biete ich mehr Flexibilität.
-
----
-
-Viel Erfolg beim Einsatz des Selenium Twitter Webcrawlers!
+Viel Erfolg mit den ÖPNV-Bots!
