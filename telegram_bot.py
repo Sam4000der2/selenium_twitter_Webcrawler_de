@@ -35,19 +35,22 @@ if admin is None:
 def load_data():
     try:
         if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, 'r') as file:
-                return read_json_to_dict(file)
+            with open(DATA_FILE, 'r', encoding='utf-8') as file:
+                data = read_json_to_dict(file)
+                return data if data is not None else []
         else:
-            return {"chat_id": {}, "keywords": {}}
+            return []
     except Exception as e:
         logging.error(f"telegram_bot: Fehler in def load_data: {e}")
-        return {"chat_id": {}, "keywords": {}}
+        return []
 
 
 def read_json_to_dict(json_file):
     data_dict = []
     try:
         json_data = json_file.read()
+        if not json_data or not json_data.strip():
+            return []
         data = json.loads(json_data)
 
         chat_ids = data.get("chat_ids", {})
@@ -57,6 +60,8 @@ def read_json_to_dict(json_file):
             if chat_id in chat_ids:
                 entry = {"chat_id": int(chat_id), "keywords": keywords}
                 data_dict.append(entry)
+    except json.JSONDecodeError as e:
+        logging.error(f"telegram_bot: Ungültige JSON in {DATA_FILE}: {e}")
     except Exception as e:
         logging.error(f"telegram_bot: Fehler in def read_json_to_dict: {e}")
 
