@@ -63,12 +63,13 @@ def expand_short_urls(urls):
     Nur funktionierende URLs (Status 2xx-3xx) werden in die Rückgabeliste aufgenommen.
     """
     expanded_urls = []
+    seen: set[str] = set()
     headers = {"User-Agent": "Mozilla/5.0 (compatible; bot/1.0)"}
-    for url in urls:
-        if isinstance(url, str):
-            url = url.replace('"', '').replace("'", "").replace("[", "").replace("]", "").replace("…", "").replace("%E2%80%A6", "")
-        if not url:
+    for raw in urls:
+        url = normalize_url(raw)
+        if not url or url in seen:
             continue
+        seen.add(url)
         try:
             response = requests.head(url, allow_redirects=True, timeout=5, headers=headers)
             status_ok = response is not None and 200 <= response.status_code < 400
@@ -84,7 +85,61 @@ def expand_short_urls(urls):
                 logging.error(f"twitter_bot: Überprüfung URL {url} liefert ungültigen Status {getattr(response, 'status_code', 'unknown')}")
         except Exception as ex:
             logging.error(f"twitter_bot: Fehler beim Überprüfen der URL {url}: {ex}")
-    return expanded_urls
+    # Nach Auflösung erneut normalisieren und deduplizieren
+    return dedupe_preserve_order([normalize_url(u) for u in expanded_urls])
+
+
+def normalize_url(url: str) -> str:
+    """
+    Stellt sicher, dass URLs bereinigt werden und ein Schema haben (default https://).
+    Entfernt typische Satzzeichen/Quotes am Rand.
+    """
+    cleaned = (url or "").strip()
+    cleaned = cleaned.strip(".,;:!?()[]{}<>\"'…")
+    cleaned = cleaned.replace("%E2%80%A6", "")
+    if not cleaned:
+        return ""
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", cleaned):
+        cleaned = cleaned.lstrip("/")
+        cleaned = f"https://{cleaned}"
+    return cleaned
+
+
+def dedupe_preserve_order(items):
+    seen = set()
+    result = []
+    for item in items:
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+# Erfasst http/https, www., sowie nackte Domains mit optionalem Pfad
+TEXT_URL_RX = re.compile(
+    r"(?P<url>(?:https?://|www\.)[^\s]+|(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?:/[^\s]*)?)",
+    re.IGNORECASE
+)
+
+
+def extract_urls_from_text(text: str) -> tuple[str, list[str]]:
+    """
+    Entfernt alle erkannten Links aus dem Text und gibt den bereinigten Text + URL-Liste zurück.
+    Ergänzt fehlendes Schema mit https://.
+    """
+    found: list[str] = []
+
+    def _replacer(match):
+        raw = match.group("url")
+        normalized = normalize_url(raw)
+        if normalized:
+            found.append(normalized)
+        return ""
+
+    cleaned = TEXT_URL_RX.sub(_replacer, text or "")
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    return cleaned, dedupe_preserve_order(found)
 
 
 def pick_username(user: str, username: str) -> tuple[str, str]:
@@ -254,14 +309,17 @@ def find_all_tweets(driver):
             if videos:
                 extern_urls.extend(videos)
 
-            # Extract and remove all links from the content
-            url_pattern = re.compile(r"https?://\S+|http?://\S+")
-            found_urls = url_pattern.findall(content)
-            extern_urls.extend(found_urls)  # Add found URLs to extern_urls
-            content = url_pattern.sub('', content)  # Remove URLs from content
+            # Alle Links aus dem Text entfernen (auch ohne Schema) und zu extern_urls verschieben
+            content, content_urls = extract_urls_from_text(content)
+            extern_urls.extend(content_urls)
+
+            # Links bereinigen, Schema ergänzen und deduplizieren
+            extern_urls = dedupe_preserve_order([normalize_url(u) for u in extern_urls])
 
             # Neuer Aufruf: Erweitere Kurzlinks in extern_urls
             extern_urls = expand_short_urls(extern_urls)
+            # Endgültig normalisieren + deduplizieren, falls expand_short_urls Duplikate erzeugt
+            extern_urls = dedupe_preserve_order([normalize_url(u) for u in extern_urls])
             videos_as_string = str(videos).replace("[]", "").replace("'", "") if videos else ""
 
             if not images:
