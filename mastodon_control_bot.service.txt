@@ -1,0 +1,15 @@
+[Unit]
+Description=mastodon_control_bot
+After=network.target
+
+[Service]
+EnvironmentFile=/etc/twitter_bot.env
+WorkingDirectory=/home/sascha/bots
+ExecStart=/home/sascha/bots/venv/bin/python3 /home/sascha/bots/mastodon_control_bot.py
+Restart=always
+RestartSec=10
+User=sascha
+Group=sascha
+
+[Install]
+WantedBy=multi-user.target
