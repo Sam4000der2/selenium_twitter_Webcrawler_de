@@ -263,15 +263,26 @@ def expand_short_urls(urls: list[str]) -> list[str]:
         if not url or url in seen:
             continue
         seen.add(url)
+        response = None
         try:
             response = requests.head(url, allow_redirects=True, timeout=5, headers=headers)
             status_ok = response is not None and 200 <= response.status_code < 400
+            status_code = getattr(response, "status_code", None)
 
-            if (not status_ok) and ("dlvr.it" in url.lower()):
-                response = requests.get(url, allow_redirects=True, timeout=8, headers=headers)
+            # Einige Server liefern bei HEAD (z. B. 400/405) falsche Fehler; dann auf GET ausweichen.
+            should_retry_get = (not status_ok) and status_code not in (429,)
+            if ("dlvr.it" in url.lower()) and not status_ok:
+                should_retry_get = True
+
+            if should_retry_get:
+                if response is not None:
+                    response.close()
+                response = requests.get(
+                    url, allow_redirects=True, timeout=8, headers=headers, stream=True
+                )
                 status_ok = response is not None and 200 <= response.status_code < 400
 
-            if status_ok:
+            if status_ok and response is not None:
                 expanded_urls.append(response.url)
             else:
                 status_code = getattr(response, "status_code", "unknown")
@@ -281,6 +292,12 @@ def expand_short_urls(urls: list[str]) -> list[str]:
                 log_fn(f"nitter_bot: Überprüfung URL {url} liefert ungültigen Status {status_code}")
         except Exception as ex:
             logging.error(f"nitter_bot: Fehler beim Überprüfen der URL {url}: {ex}")
+        finally:
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
 
     return dedupe_preserve_order([normalize_url(u) for u in expanded_urls])
 
