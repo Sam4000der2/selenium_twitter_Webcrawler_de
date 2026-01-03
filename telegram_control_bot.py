@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import logging
 import subprocess
 import re
+from mastodon_text_utils import split_mastodon_text
 
 # Secrets aus ENV (global + local):
 #   telegram_token  -> Bot Token
@@ -43,6 +44,7 @@ BOT_NAMES_FOR_COUNT = [
     "telegram_bot",
     "mastodon_bot",
     "bsky_bot",
+    "nitter_bot",
 ]
 
 ADMIN_BOT_NAMES_FOR_COUNT = BOT_NAMES_FOR_COUNT + [
@@ -58,6 +60,7 @@ ADMIN_ERROR_GROUPS = [
     "telegram_bot",
     "mastodon_bot",
     "bsky_bot",
+    "nitter_bot",
     "mastodon_control_bot",
     "telegram_control_bot",
     "gemini_helper",
@@ -395,7 +398,6 @@ async def status_command(bot, chat_id: int, admin_view: bool = False):
       - Fehlergruppen (distinct)
       - Auslösungen (Summe)
     """
-    bot_groups = ADMIN_BOT_NAMES_FOR_COUNT if admin_view else BOT_NAMES_FOR_COUNT
     include_warnings = admin_view
     try:
         twitter_state, _ = get_service_state(
@@ -406,32 +408,76 @@ async def status_command(bot, chat_id: int, admin_view: bool = False):
             "bsky_bot.service",
             fallback_patterns=["bsky_bot", "bsky_bot.py", "/home/sascha/bots/bsky", "bluesky"]
         )
+        nitter_state, _ = get_service_state(
+            "nitter_bot.service",
+            fallback_patterns=["nitter_bot", "nitter_bot.py", "/home/sascha/Dokumente/bots/nitter"]
+        )
+
+        twitter_running = twitter_state.startswith("läuft")
+        nitter_running = nitter_state.startswith("läuft")
+
+        if admin_view:
+            bot_groups = ADMIN_BOT_NAMES_FOR_COUNT
+        else:
+            # Zeige entweder nur den laufenden Twitter- oder Nitter-Bot,
+            # falls genau einer aktiv ist; ansonsten beide.
+            show_twitter = True
+            show_nitter = True
+            if twitter_running != nitter_running:
+                show_twitter = twitter_running
+                show_nitter = nitter_running
+
+            bot_groups = [
+                b for b in BOT_NAMES_FOR_COUNT
+                if not ((b == "twitter_bot" and not show_twitter) or (b == "nitter_bot" and not show_nitter))
+            ]
 
         since = datetime.now() - timedelta(hours=24)
-        grouped = count_errors_since_grouped(
+        grouped_errors = count_errors_since_grouped(
             BOT_LOG_FILE,
             bot_groups,
             since,
-            levels=("ERROR", "WARNING") if include_warnings else ("ERROR",)
+            levels=("ERROR",)
         )
+        grouped_warnings = None
+        if admin_view:
+            grouped_warnings = count_errors_since_grouped(
+                BOT_LOG_FILE,
+                bot_groups,
+                since,
+                levels=("WARNING",)
+            )
 
         lines = []
         lines.append(f"Twitter-Modul: {twitter_state}")
         lines.append(f"Bluesky-Modul: {bsky_state}")
+        lines.append(f"Nitter-Modul: {nitter_state}")
         if admin_view:
-            lines.append("Admin-Sicht: Warnungen werden mitgezählt (inkl. Alt-Text, Control-Bots, Gemini Helper).")
+            lines.append("Admin-Sicht: Fehler und Warnungen getrennt, inkl. Alt-Text, Control-Bots, Gemini Helper.")
         lines.append("")
-        lines.append("Fehler/Warnungen (letzte 24 Stunden):" if include_warnings else "Fehler (letzte 24 Stunden):")
+        lines.append("Fehler (letzte 24 Stunden):")
         lines.append("")
 
         for botname in bot_groups:
-            bot_dict = grouped.get(botname, {}) or {}
+            bot_dict = grouped_errors.get(botname, {}) if grouped_errors else {}
             error_groups = len(bot_dict)
             occurrences = sum(bot_dict.values())
             lines.append(f"- {botname}")
             lines.append(f"  Fehlergruppen: {error_groups}")
             lines.append(f"  Auslösungen:   {occurrences}")
             lines.append("")
+
+        if admin_view and grouped_warnings is not None:
+            lines.append("Warnungen (letzte 24 Stunden):")
+            lines.append("")
+            for botname in bot_groups:
+                warn_dict = grouped_warnings.get(botname, {}) if grouped_warnings else {}
+                warn_groups = len(warn_dict)
+                warn_occurrences = sum(warn_dict.values())
+                lines.append(f"- {botname}")
+                lines.append(f"  Warngruppen: {warn_groups}")
+                lines.append(f"  Auslösungen: {warn_occurrences}")
+                lines.append("")
 
         text = "\n".join(lines).strip()
         for part in split_telegram_text(text):
@@ -772,34 +818,6 @@ def service_tweet(message):
     return service_message
 
 
-def split_service_message(service_message: str, max_length: int = 450) -> list[str]:
-    parts = []
-    while service_message:
-        if len(service_message) <= max_length:
-            parts.append(service_message)
-            break
-
-        segment = service_message[:max_length]
-        last_newline = segment.rfind('\n')
-        last_period = segment.rfind('.')
-        last_comma = segment.rfind(',')
-
-        split_index = max(last_newline, last_period, last_comma)
-        if split_index == -1:
-            split_index = max_length
-        else:
-            split_index += 1
-
-        part = service_message[:split_index].strip()
-        parts.append(part)
-        service_message = service_message[split_index:].strip()
-
-    for i in range(len(parts)):
-        parts[i] = f"[Part {i+1}]\n\n{parts[i]}"
-
-    return parts
-
-
 def text_formatierer(message):
     message = message.replace('. ', '.\n')
     message = message.replace(': ', ':\n')
@@ -813,10 +831,9 @@ def build_service_messages(formated_message: str) -> tuple[list[dict], bool]:
     """
     Gibt die Service-Nachrichten als Liste zurück und markiert, ob ein Thread gebaut werden soll.
     """
-    if len(formated_message) > 470:
-        parts = split_service_message(formated_message)
-        return [service_tweet(part)[0] for part in parts], True
-    return service_tweet(formated_message), False
+    parts = split_mastodon_text(formated_message)
+    threaded = len(parts) > 1
+    return service_tweet(formated_message), threaded
 
 
 async def admin_telegram_send(message):

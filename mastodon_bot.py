@@ -16,6 +16,7 @@ from mastodon import Mastodon
 from google import genai
 from google.genai import types  # <- für system_instruction
 from gemini_helper import GeminiModelManager
+from mastodon_text_utils import split_mastodon_text
 
 # Initialize the Google Gemini client with the API key
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
@@ -354,105 +355,36 @@ async def tag_users_for_status(mastodon, status: dict, content: str, rules_data:
         await send_direct_reply(mastodon, status, acct, msg)
 
 
-def sanitize_for_mastodon(text: str) -> str:
-    text = text.replace('@', '#')
-    while '##' in text:
-        text = text.replace('##', '#')
-    text = text.replace('https://x.com', 'x')
-    return text
-
-
-def truncate_with_ellipsis(text: str, max_len: int) -> str:
-    if max_len <= 0:
-        return ""
-    if len(text) <= max_len:
-        return text
-    if max_len <= 1:
-        return "…"
-    return text[:max_len - 1] + "…"
-
-
-def build_mastodon_message(
+def build_mastodon_messages(
     username: str,
     tweet_text: str,
     var_href: str | None,
     extern_urls: str | None,
     posted_time: str | None,
-    max_len: int = MASTODON_MAX_CHARS
-) -> str:
+    max_len: int = MASTODON_MAX_CHARS,
+) -> list[str]:
     """
-    Tweet-Text hat Priorität.
-    Wenn zu lang: entferne in dieser Reihenfolge:
-      1) footer
-      2) src_line
-      3) posted_time
-      4) extern_urls
-    Erst wenn Header+Tweet selbst zu lang: Tweet kürzen (ohne Footer/Meta).
+    Assemble a Mastodon status and split it into thread parts when it exceeds the limit.
+    Header stays on the first post, metadata goes to the end.
     """
     tweet_text = tweet_text or ""
     header = f"#{username}:\n\n"
     footer = "\n\n#öpnv_berlin_bot"
 
-    src_line  = f"\n\nsrc: {var_href}" if var_href else ""
+    src_line = f"\n\nsrc: {var_href}" if var_href else ""
     urls_line = f"\n{extern_urls}" if extern_urls else ""
     time_line = f"\n{posted_time}" if posted_time else ""
 
-    # Header + Tweet zu lang => Tweet kürzen (ohne Footer/Meta)
-    if len(header) + len(tweet_text) > max_len:
-        available = max_len - len(header)
-        msg = header + truncate_with_ellipsis(tweet_text, available)
-        return sanitize_for_mastodon(msg)[:max_len]
+    full_message = f"{header}{tweet_text}"
+    if urls_line:
+        full_message += urls_line
+    full_message += footer
+    if src_line:
+        full_message += src_line
+    if time_line:
+        full_message += time_line
 
-    include_footer = True
-    include_src = bool(src_line)
-    include_time = bool(time_line)
-    include_urls = bool(urls_line)
-
-    def assemble() -> str:
-        msg = header + tweet_text + (footer if include_footer else "")
-        meta = ""
-        if include_src:
-            meta += src_line
-        if include_urls:
-            meta += urls_line
-        if include_time:
-            meta += time_line
-        return msg + meta
-
-    # Alles drin
-    msg = assemble()
-    if len(msg) <= max_len:
-        return sanitize_for_mastodon(msg)[:max_len]
-
-    # Entfernen: footer -> src -> time -> urls
-    if include_footer:
-        include_footer = False
-        msg = assemble()
-        if len(msg) <= max_len:
-            return sanitize_for_mastodon(msg)[:max_len]
-
-    if include_src:
-        include_src = False
-        msg = assemble()
-        if len(msg) <= max_len:
-            return sanitize_for_mastodon(msg)[:max_len]
-
-    if include_time:
-        include_time = False
-        msg = assemble()
-        if len(msg) <= max_len:
-            return sanitize_for_mastodon(msg)[:max_len]
-
-    if include_urls:
-        include_urls = False
-        msg = assemble()
-        if len(msg) <= max_len:
-            return sanitize_for_mastodon(msg)[:max_len]
-
-    # Fallback: Tweet kürzen
-    available = max_len - len(header)
-    msg = header + truncate_with_ellipsis(tweet_text, available)
-    return sanitize_for_mastodon(msg)[:max_len]
+    return split_mastodon_text(full_message, max_len=max_len)
 
 
 async def post_tweet(mastodon, message, username, instance_name, in_reply_to_id=None):
@@ -842,7 +774,7 @@ async def main(new_tweets, thread: bool = False):
 
         _hashtags = extract_hashtags(content_raw, username)
 
-        message = build_mastodon_message(
+        messages = build_mastodon_messages(
             username=username,
             tweet_text=content_raw,
             var_href=var_href,
@@ -850,6 +782,9 @@ async def main(new_tweets, thread: bool = False):
             posted_time=posted_time,
             max_len=MASTODON_MAX_CHARS
         )
+
+        if not messages:
+            continue
 
         media_payloads = []
         use_video = False
@@ -876,28 +811,43 @@ async def main(new_tweets, thread: bool = False):
 
         for instance_name, mastodon in clients:
             reply_to_id = reply_context.get(instance_name) if reply_context is not None else None
-            status_obj = None
-            if media_payloads:
-                print(f"Posting tweet with media for {username} to {instance_name}")
-                status_obj = await post_tweet_with_media(
-                    mastodon=mastodon,
-                    message=message,
-                    media_payloads=media_payloads,
-                    instance_name=instance_name,
-                    username=username,
-                    in_reply_to_id=reply_to_id,
-                )
-                # Fallback: wenn Video scheitert, versuche Bilder (sofern vorhanden)
-                if status_obj is None and use_video and images:
-                    if image_payloads is None:
-                        image_payloads = await prepare_media_payloads(
-                            images=images,
-                            original_tweet_full=content_raw,
-                            twitter_account=username,
-                            tweet_url=var_href
-                        )
-                    if image_payloads:
-                        status_obj = await post_tweet_with_media(
+            last_status_id = None
+
+            for idx, message in enumerate(messages):
+                status_obj = None
+                attach_media = media_payloads if idx == 0 else []
+
+                if attach_media:
+                    print(f"Posting tweet with media for {username} to {instance_name}")
+                    status_obj = await post_tweet_with_media(
+                        mastodon=mastodon,
+                        message=message,
+                        media_payloads=attach_media,
+                        instance_name=instance_name,
+                        username=username,
+                        in_reply_to_id=reply_to_id,
+                    )
+                    # Fallback: wenn Video scheitert, versuche Bilder (sofern vorhanden)
+                    if status_obj is None and use_video and images:
+                        if image_payloads is None:
+                            image_payloads = await prepare_media_payloads(
+                                images=images,
+                                original_tweet_full=content_raw,
+                                twitter_account=username,
+                                tweet_url=var_href
+                            )
+                        if image_payloads:
+                            status_obj = await post_tweet_with_media(
+                                mastodon=mastodon,
+                                message=message,
+                                media_payloads=image_payloads,
+                                instance_name=instance_name,
+                                username=username,
+                                in_reply_to_id=reply_to_id,
+                            )
+                    # Fallback: wenn nur Bilder und generischer Upload scheitert, nutze Legacy-Bild-Upload
+                    if status_obj is None and not use_video and image_payloads:
+                        status_obj = await post_tweet_with_images_legacy(
                             mastodon=mastodon,
                             message=message,
                             media_payloads=image_payloads,
@@ -905,32 +855,27 @@ async def main(new_tweets, thread: bool = False):
                             username=username,
                             in_reply_to_id=reply_to_id,
                         )
-                # Fallback: wenn nur Bilder und generischer Upload scheitert, nutze Legacy-Bild-Upload
-                if status_obj is None and not use_video and image_payloads:
-                    status_obj = await post_tweet_with_images_legacy(
-                        mastodon=mastodon,
-                        message=message,
-                        media_payloads=image_payloads,
-                        instance_name=instance_name,
-                        username=username,
-                        in_reply_to_id=reply_to_id,
+                else:
+                    print(f"Posting tweet without images for {username} to {instance_name}")
+                    status_obj = await post_tweet(
+                        mastodon,
+                        message,
+                        username,
+                        instance_name,
+                        in_reply_to_id=reply_to_id
                     )
-            else:
-                print(f"Posting tweet without images for {username} to {instance_name}")
-                status_obj = await post_tweet(
-                    mastodon,
-                    message,
-                    username,
-                    instance_name,
-                    in_reply_to_id=reply_to_id
-                )
 
-            if status_obj:
+                if not status_obj:
+                    break
+
                 asyncio.create_task(notify_control_bot(instance_name, status_obj, content_raw))
-                if reply_context is not None:
-                    status_id = status_obj.get("id") if hasattr(status_obj, "get") else getattr(status_obj, "id", None)
-                    if status_id:
-                        reply_context[instance_name] = status_id
+                status_id = status_obj.get("id") if hasattr(status_obj, "get") else getattr(status_obj, "id", None)
+                if status_id:
+                    reply_to_id = status_id
+                    last_status_id = status_id
+
+            if reply_context is not None and last_status_id:
+                reply_context[instance_name] = last_status_id
 
     print("Main function completed")
 
