@@ -72,16 +72,26 @@ def expand_short_urls(urls):
         if not url or url in seen:
             continue
         seen.add(url)
+        response = None
         try:
             response = requests.head(url, allow_redirects=True, timeout=5, headers=headers)
             status_ok = response is not None and 200 <= response.status_code < 400
+            status_code = getattr(response, "status_code", None)
 
-            # Einige Kurz-URL-Dienste (z.B. dlvr.it) blocken HEAD -> Fallback GET
-            if (not status_ok) and ("dlvr.it" in url.lower()):
-                response = requests.get(url, allow_redirects=True, timeout=8, headers=headers)
+            # Manche Server liefern auf HEAD 400/405 etc.; dann auf GET ausweichen (ausgenommen 429).
+            should_retry_get = (not status_ok) and status_code not in (429,)
+            if ("dlvr.it" in url.lower()) and not status_ok:
+                should_retry_get = True
+
+            if should_retry_get:
+                if response is not None:
+                    response.close()
+                response = requests.get(
+                    url, allow_redirects=True, timeout=8, headers=headers, stream=True
+                )
                 status_ok = response is not None and 200 <= response.status_code < 400
 
-            if status_ok:
+            if status_ok and response is not None:
                 expanded_urls.append(response.url)
             else:
                 status_code = getattr(response, "status_code", "unknown")
@@ -91,6 +101,12 @@ def expand_short_urls(urls):
                 log_fn(f"twitter_bot: Überprüfung URL {url} liefert ungültigen Status {status_code}")
         except Exception as ex:
             logging.error(f"twitter_bot: Fehler beim Überprüfen der URL {url}: {ex}")
+        finally:
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
     # Nach Auflösung erneut normalisieren und deduplizieren
     return dedupe_preserve_order([normalize_url(u) for u in expanded_urls])
 
