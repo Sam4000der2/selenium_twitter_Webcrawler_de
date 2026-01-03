@@ -8,6 +8,7 @@ import shutil
 import asyncio
 import logging
 from typing import Optional, Tuple
+from urllib.parse import urlparse
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.firefox.service import Service as FirefoxService
@@ -83,7 +84,11 @@ def expand_short_urls(urls):
             if status_ok:
                 expanded_urls.append(response.url)
             else:
-                logging.error(f"twitter_bot: Überprüfung URL {url} liefert ungültigen Status {getattr(response, 'status_code', 'unknown')}")
+                status_code = getattr(response, "status_code", "unknown")
+                log_fn = logging.warning
+                if isinstance(status_code, int) and status_code >= 500:
+                    log_fn = logging.error
+                log_fn(f"twitter_bot: Überprüfung URL {url} liefert ungültigen Status {status_code}")
         except Exception as ex:
             logging.error(f"twitter_bot: Fehler beim Überprüfen der URL {url}: {ex}")
     # Nach Auflösung erneut normalisieren und deduplizieren
@@ -133,7 +138,12 @@ def extract_urls_from_text(text: str) -> tuple[str, list[str]]:
 
     def _replacer(match):
         raw = match.group("url")
-        normalized = normalize_url(raw)
+        trimmed_raw = raw.rstrip(".,;:!?")
+        if trimmed_raw.endswith(("…", "...", "%E2%80%A6")):
+            # Link ist im Tweet-Text abgeschnitten (Ellipsis) -> überspringen
+            return ""
+
+        normalized = normalize_url(trimmed_raw)
         if normalized:
             found.append(normalized)
         return ""
@@ -141,6 +151,26 @@ def extract_urls_from_text(text: str) -> tuple[str, list[str]]:
     cleaned = TEXT_URL_RX.sub(_replacer, text or "")
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
     return cleaned, dedupe_preserve_order(found)
+
+
+HASHTAG_HOSTS = {
+    "x.com",
+    "www.x.com",
+    "twitter.com",
+    "www.twitter.com",
+    "mobile.twitter.com",
+    "m.twitter.com",
+}
+
+
+def is_hashtag_url(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+        host = (parsed.netloc or "").lower()
+        path = (parsed.path or "").lower()
+        return host in HASHTAG_HOSTS and path.startswith("/hashtag/")
+    except Exception:
+        return False
 
 
 def pick_username(user: str, username: str) -> tuple[str, str]:
@@ -219,6 +249,30 @@ def extract_content(tweet) -> str:
     return ""
 
 
+def extract_text_link_hrefs(tweet, status_url: str) -> list:
+    """
+    Liest echte hrefs aus dem Textblock aus (verhindert gekürzte/ellipsis-Links).
+    Filtert den eigenen Status-Link heraus.
+    """
+    try:
+        anchors = tweet.find_elements(By.CSS_SELECTOR, '[data-testid="tweetText"] a[href]')
+        urls = []
+        for anchor in anchors:
+            href = anchor.get_attribute("href") or ""
+            if not href:
+                continue
+            if status_url and href.startswith(status_url):
+                continue
+            if href.startswith("http://") or href.startswith("https://"):
+                urls.append(href)
+        return urls
+    except StaleElementReferenceException:
+        raise
+    except Exception as ex:
+        logging.warning(f"twitter_bot: Konnte Text-Link-hrefs nicht auslesen: {ex}")
+        return []
+
+
 def extract_images(tweet) -> list:
     try:
         images = []
@@ -282,8 +336,95 @@ def extract_external_urls(tweet) -> list:
     return extern_urls
 
 
+def collect_tweet_data(tweet, index: int) -> Optional[dict]:
+    """
+    Extrahiert alle benötigten Felder aus einem Tweet-Element.
+    Wirft bei StaleElementReferenceException nach oben, damit der Aufrufer neu laden kann.
+    """
+    try:
+        user, username = extract_user_fields(tweet)
+        content = extract_content(tweet)
+
+        try:
+            replies_element = tweet.find_element(By.CSS_SELECTOR, '[data-testid="reply"]')
+            replies = replies_element.text
+        except StaleElementReferenceException:
+            raise
+        except Exception as ex:
+            logging.warning(f"twitter_bot: Error finding replies element: {ex}")
+            replies = ""
+
+        var_href = extract_status_url(tweet)
+
+        text_link_hrefs = extract_text_link_hrefs(tweet, var_href)
+
+        try:
+            timestamp = tweet.find_element(By.TAG_NAME, "time").get_attribute("datetime")
+            posted_time_utc = parse(timestamp).replace(tzinfo=pytz.utc)
+            local_timezone = pytz.timezone('Europe/Berlin')
+            posted_time_local = posted_time_utc.astimezone(local_timezone)
+            desired_format = "%d.%m.%Y %H:%M"
+            posted_time = posted_time_local.strftime(desired_format)
+        except StaleElementReferenceException:
+            raise
+        except Exception as ex:
+            logging.warning(f"twitter_bot: Error finding timestamp: {ex}")
+            posted_time = ""
+
+        images = extract_images(tweet)
+        videos = extract_videos(tweet)
+        extern_urls = extract_external_urls(tweet)
+        if videos:
+            extern_urls.extend(videos)
+
+        # Alle Links aus dem Text entfernen (auch ohne Schema) und zu extern_urls verschieben
+        content, content_urls = extract_urls_from_text(content)
+        extern_urls.extend(text_link_hrefs)
+        extern_urls.extend(content_urls)
+
+        # Links bereinigen, Schema ergänzen und deduplizieren
+        extern_urls = dedupe_preserve_order([normalize_url(u) for u in extern_urls])
+        extern_urls = [u for u in extern_urls if not is_hashtag_url(u)]
+
+        # Neuer Aufruf: Erweitere Kurzlinks in extern_urls
+        extern_urls = expand_short_urls(extern_urls)
+        # Endgültig normalisieren + deduplizieren, falls expand_short_urls Duplikate erzeugt
+        extern_urls = dedupe_preserve_order([normalize_url(u) for u in extern_urls])
+        extern_urls = [u for u in extern_urls if not is_hashtag_url(u)]
+        videos_as_string = str(videos).replace("[]", "").replace("'", "") if videos else ""
+
+        if not images:
+            images_as_string = ""
+        else:
+            images_as_string = str(images).replace("[]", "").replace("'", "")
+
+        if not extern_urls:
+            extern_urls_as_string = ""
+        else:
+            extern_urls_as_string = str(extern_urls).replace("[]", "").replace("'", "")
+
+        return {
+            "user": user,
+            "username": username,
+            "content": content,
+            "posted_time": posted_time,
+            "var_href": var_href,
+            "images": images,
+            "videos": videos,
+            "extern_urls": extern_urls,
+            "images_as_string": images_as_string,
+            "videos_as_string": videos_as_string,
+            "extern_urls_as_string": extern_urls_as_string
+        }
+    except StaleElementReferenceException:
+        raise
+    except Exception as ex:
+        logging.error(f"twitter_bot: Unerwarteter Fehler bei Tweet #{index}: {ex}")
+        return None
+
+
 def find_all_tweets(driver):
-    """Finds all tweets from the page"""
+    """Finds all tweets from the page with a retry on stale elements."""
     try:
         try:
             tweets = WebDriverWait(driver, 20).until(
@@ -294,83 +435,22 @@ def find_all_tweets(driver):
             tweets = driver.find_elements(By.CSS_SELECTOR, '[data-testid="tweet"]')
         tweets = list(tweets or [])
         tweet_data = []
-        for i, tweet in enumerate(tweets):
-            try:
-                user, username = extract_user_fields(tweet)
-                content = extract_content(tweet)
-
+        for i in range(len(tweets)):
+            for attempt in range(2):
                 try:
-                    replies_element = tweet.find_element(By.CSS_SELECTOR, '[data-testid="reply"]')
-                    replies = replies_element.text
-                except StaleElementReferenceException:
-                    raise
-                except Exception as ex:
-                    logging.warning(f"twitter_bot: Error finding replies element: {ex}")
-                    replies = ""
-
-                var_href = extract_status_url(tweet)
-
-                try:
-                    timestamp = tweet.find_element(By.TAG_NAME, "time").get_attribute("datetime")
-                    posted_time_utc = parse(timestamp).replace(tzinfo=pytz.utc)
-                    local_timezone = pytz.timezone('Europe/Berlin')
-                    posted_time_local = posted_time_utc.astimezone(local_timezone)
-                    desired_format = "%d.%m.%Y %H:%M"
-                    posted_time = posted_time_local.strftime(desired_format)
-                except StaleElementReferenceException:
-                    raise
-                except Exception as ex:
-                    logging.warning(f"twitter_bot: Error finding timestamp: {ex}")
-                    posted_time = ""
-
-                images = extract_images(tweet)
-                videos = extract_videos(tweet)
-                extern_urls = extract_external_urls(tweet)
-                if videos:
-                    extern_urls.extend(videos)
-
-                # Alle Links aus dem Text entfernen (auch ohne Schema) und zu extern_urls verschieben
-                content, content_urls = extract_urls_from_text(content)
-                extern_urls.extend(content_urls)
-
-                # Links bereinigen, Schema ergänzen und deduplizieren
-                extern_urls = dedupe_preserve_order([normalize_url(u) for u in extern_urls])
-
-                # Neuer Aufruf: Erweitere Kurzlinks in extern_urls
-                extern_urls = expand_short_urls(extern_urls)
-                # Endgültig normalisieren + deduplizieren, falls expand_short_urls Duplikate erzeugt
-                extern_urls = dedupe_preserve_order([normalize_url(u) for u in extern_urls])
-                videos_as_string = str(videos).replace("[]", "").replace("'", "") if videos else ""
-
-                if not images:
-                    images_as_string = ""
-                else:
-                    images_as_string = str(images).replace("[]", "").replace("'", "")
-
-                if not extern_urls:
-                    extern_urls_as_string = ""
-                else:
-                    extern_urls_as_string = str(extern_urls).replace("[]", "").replace("'", "")
-
-                tweet_data.append({
-                    "user": user,
-                    "username": username,
-                    "content": content,
-                    "posted_time": posted_time,
-                    "var_href": var_href,
-                    "images": images,
-                    "videos": videos,
-                    "extern_urls": extern_urls,
-                    "images_as_string": images_as_string,
-                    "videos_as_string": videos_as_string,
-                    "extern_urls_as_string": extern_urls_as_string
-                })
-            except StaleElementReferenceException as ex:
-                logging.warning(f"twitter_bot: Stale tweet element #{i}, übersprungen: {ex}")
-                continue
-            except Exception as ex:
-                logging.error(f"twitter_bot: Unerwarteter Fehler bei Tweet #{i}: {ex}")
-                continue
+                    tweet = tweets[i] if i < len(tweets) else None
+                    if tweet is None:
+                        raise StaleElementReferenceException("Tweet element missing after refresh")
+                    data = collect_tweet_data(tweet, i)
+                    if data:
+                        tweet_data.append(data)
+                    break
+                except StaleElementReferenceException as ex:
+                    logging.warning(f"twitter_bot: Stale tweet element #{i} (Versuch {attempt + 1}), versuche erneut: {ex}")
+                    time.sleep(0.3)
+                    tweets = driver.find_elements(By.CSS_SELECTOR, '[data-testid="tweet"]')
+            else:
+                logging.warning(f"twitter_bot: Tweet #{i} nach 2 Versuchen übersprungen (stale).")
 
         return tweet_data
     except Exception as ex:

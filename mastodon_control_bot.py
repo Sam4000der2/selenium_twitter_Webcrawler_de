@@ -11,6 +11,7 @@ from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from mastodon import Mastodon
+from mastodon_text_utils import split_mastodon_text
 
 # ----------------------------
 # Konstanten / Pfade
@@ -40,6 +41,7 @@ BOT_NAMES_FOR_COUNT = [
     "telegram_bot",
     "mastodon_bot",
     "bsky_bot",
+    "nitter_bot",
     ALT_TEXT_CATEGORY,
     GEMINI_HELPER_CATEGORY,
 ]
@@ -189,32 +191,6 @@ def get_service_state(service_name: str, fallback_patterns: list[str]) -> tuple[
         return "unbekannt", detail
 
     return "unbekannt", "keine daten"
-
-
-# ----------------------------
-# Helpers: Text
-# ----------------------------
-def split_mastodon_text(text: str, max_len: int = MASTODON_DM_MAX) -> list[str]:
-    parts = []
-    remaining = text.strip()
-    while remaining:
-        if len(remaining) <= max_len:
-            parts.append(remaining)
-            break
-        chunk = remaining[:max_len]
-
-        split_at = max_len
-        separators = ["\n\n", "\n", ". ", ", ", " "]
-        for sep in separators:
-            idx = chunk.rfind(sep)
-            if idx > 0:
-                split_at = idx + len(sep)
-                break
-
-        next_part = remaining[:split_at].rstrip()
-        parts.append(next_part)
-        remaining = remaining[split_at:].lstrip()
-    return parts
 
 
 def strip_html_content(content: str) -> str:
@@ -901,11 +877,31 @@ def build_status_text() -> str:
             "bsky_bot.service",
             fallback_patterns=["bsky_bot", "bsky_bot.py", "/home/sascha/bots/bsky", "bluesky"]
         )
+        nitter_state, _ = get_service_state(
+            "nitter_bot.service",
+            fallback_patterns=["nitter_bot", "nitter_bot.py", "/home/sascha/Dokumente/bots/nitter"]
+        )
+
+        twitter_running = twitter_state.startswith("läuft")
+        nitter_running = nitter_state.startswith("läuft")
+
+        # Für Nicht-Admins (alle Mastodon-Nutzer): nur den laufenden Bot zählen, wenn genau einer läuft,
+        # sonst beide anzeigen.
+        bot_groups = BOT_NAMES_FOR_COUNT
+        show_twitter = True
+        show_nitter = True
+        if twitter_running != nitter_running:
+            show_twitter = twitter_running
+            show_nitter = nitter_running
+        bot_groups = [
+            b for b in BOT_NAMES_FOR_COUNT
+            if not ((b == "twitter_bot" and not show_twitter) or (b == "nitter_bot" and not show_nitter))
+        ]
 
         since = datetime.now() - timedelta(hours=24)
         grouped = count_errors_since_grouped(
             BOT_LOG_FILE,
-            BOT_NAMES_FOR_COUNT,
+            bot_groups,
             since,
             levels=("ERROR", "WARNING")
         )
@@ -913,11 +909,12 @@ def build_status_text() -> str:
         lines = []
         lines.append(f"Twitter-Modul: {twitter_state}")
         lines.append(f"Bluesky-Modul: {bsky_state}")
+        lines.append(f"Nitter-Modul: {nitter_state}")
         lines.append("")
         lines.append("Fehler/Warnungen (letzte 24 Stunden):")
         lines.append("")
 
-        for botname in BOT_NAMES_FOR_COUNT:
+        for botname in bot_groups:
             bot_dict = grouped.get(botname, {}) or {}
             error_groups = len(bot_dict)
             occurrences = sum(bot_dict.values())
@@ -958,7 +955,7 @@ def send_dm(mastodon, acct: str, in_reply_to_id, text: str, include_tagging_hint
     final_max = max(1, base_max - len(suffix))
     safe_max = min(base_max, final_max)
 
-    parts = split_mastodon_text(text, max_len=safe_max)
+    parts = split_mastodon_text(text, max_len=safe_max, sanitize=False)
     total = len(parts)
 
     for idx, part in enumerate(parts):
