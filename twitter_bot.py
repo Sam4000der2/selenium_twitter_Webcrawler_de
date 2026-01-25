@@ -20,6 +20,7 @@ from selenium.common.exceptions import StaleElementReferenceException
 from dateutil.parser import parse
 import pytz
 import requests  # Neuer Import für URL-Erweiterung
+import state_store
 
 #print("Imports successful")
 
@@ -33,12 +34,11 @@ geckodriver_path = "/usr/local/bin/geckodriver"
 #eigene Liste:
 twitter_link = "https://x.com/i/lists/1901917316708778158"
 
-# File to store existing tweets
-filename = "/home/sascha/bots/existing_tweets.txt"
-
+HISTORY_LIMIT = 100
+HISTORY_TRIM_TO = 50
 
 # Logging configuration
-logging.basicConfig(filename='/home/sascha/bots/twitter_bot.log', level=logging.ERROR)
+logging.basicConfig(filename='/home/sascha/bots/twitter_bot.log', level=logging.WARNING, force=True)
 #print("Logging configured")
 
 # Set Firefox options
@@ -473,16 +473,41 @@ def find_all_tweets(driver):
         logging.error(f"twitter_bot: Error finding tweets: {ex}")
         return []
 
+def _normalize_user_key(tweet: dict) -> str:
+    username = (tweet.get("username") or "").strip()
+    user_display = (tweet.get("user") or "").strip()
+    return username or user_display or "unknown"
+
+
+def _load_history_map() -> dict[str, list[str]]:
+    raw = state_store.load_nitter_history()
+    history_map: dict[str, list[str]] = {}
+    if isinstance(raw, dict):
+        for user, urls in raw.items():
+            if not isinstance(urls, list):
+                continue
+            cleaned = [(u or "").strip() for u in urls if isinstance(u, str) and (u or "").strip()]
+            if cleaned:
+                history_map[str(user)] = cleaned[-HISTORY_LIMIT:]
+    return history_map
+
+
+def _save_history_map(history_map: dict[str, list[str]]):
+    trimmed_map: dict[str, list[str]] = {}
+    for user, urls in (history_map or {}).items():
+        if not isinstance(urls, list):
+            continue
+        trimmed_map[user] = urls[-HISTORY_TRIM_TO:]
+    state_store.save_nitter_history(trimmed_map)
+
+
 def check_and_write_tweets(tweet_data):
     try:
-        if not os.path.exists(filename):
-            open(filename, "a").close()
-
-        with open(filename, "r") as file:
-            existing_tweets = file.read().splitlines()
+        history_map = _load_history_map()
+        seen = {u for urls in history_map.values() for u in urls}
 
         new_tweets = []
-        for n, tweet in enumerate(tweet_data, start=1):
+        for tweet in tweet_data or []:
             user = tweet['user']
             username = tweet['username']
             content = tweet['content']
@@ -494,9 +519,10 @@ def check_and_write_tweets(tweet_data):
             images_as_string = tweet['images_as_string']
             videos_as_string = tweet.get('videos_as_string', "")
             extern_urls_as_string = tweet['extern_urls_as_string']
-            #print(posted_time)
 
-            if var_href not in existing_tweets:
+            user_key = _normalize_user_key(tweet)
+
+            if var_href not in seen:
                 new_tweets.append({
                     "user": user,
                     "username": username,
@@ -511,26 +537,22 @@ def check_and_write_tweets(tweet_data):
                     "extern_urls_as_string": extern_urls_as_string
                 })
 
-                with open(filename, "a") as file:
-                    file.write(var_href + "\n")
+                history_map.setdefault(user_key, []).append(var_href)
+                seen.add(var_href)
 
+        _save_history_map(history_map)
         return new_tweets
     except Exception as ex:
         logging.error(f"twitter_bot: Error checking and writing tweets: {ex}")
         return []
 
+
 def trim_existing_tweets_file():
     try:
-        with open(filename, "r") as file:
-            lines = file.readlines()
-
-        num_lines = len(lines)
-
-        if num_lines > 100:
-            with open(filename, "w") as file:
-                file.writelines(lines[50:])
+        history_map = _load_history_map()
+        _save_history_map(history_map)
     except Exception as ex:
-        logging.error(f"twitter_bot: Error trimming existing_tweets.txt file: {ex}")
+        logging.error(f"twitter_bot: Error trimming existing tweets history: {ex}")
 
 async def main():
     #print("Entering main function")

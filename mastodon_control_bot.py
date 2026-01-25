@@ -4,20 +4,19 @@ import json
 import logging
 import os
 import re
-import shutil
 import subprocess
-import tempfile
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from mastodon import Mastodon
 from mastodon_text_utils import split_mastodon_text
+import state_store
 
 # ----------------------------
 # Konstanten / Pfade
 # ----------------------------
 # Serverseitiges Rate-Limit vermeiden: Minimum 5s, Default 90s (Empfehlung)
-POLL_INTERVAL_SEC = max(5, int(os.environ.get("MASTODON_CONTROL_POLL_INTERVAL", "90")))
+POLL_INTERVAL_SEC = max(5, int(os.environ.get("MASTODON_CONTROL_POLL_INTERVAL", "180")))
 
 # Gleiche Instanzen wie mastodon_bot
 INSTANCES = {
@@ -28,9 +27,6 @@ INSTANCES = {
 
 # Logfile (nur zentrales Log)
 BOT_LOG_FILE = "/home/sascha/bots/twitter_bot.log"
-
-# Pfad für Tagging-Regeln
-RULES_FILE = "/home/sascha/bots/mastodon_rules.json"
 
 # Bots für Fehlerzählung (letzte 24h) im /status
 ALT_TEXT_CATEGORY = "Alt-Text Generierung"
@@ -287,51 +283,23 @@ def _empty_rules() -> dict:
 
 
 def load_rules() -> dict:
-    if not os.path.exists(RULES_FILE):
+    data = state_store.load_mastodon_rules()
+    if not isinstance(data, dict):
         return _empty_rules()
-    try:
-        with open(RULES_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if not isinstance(data, dict):
-                return _empty_rules()
-            data.setdefault("users", {})
-            return data
-    except json.JSONDecodeError as e:
-        logging.error(f"mastodon_control_bot: Fehler beim Laden der Regeln (inkonsistente Datei): {e}")
-        _reset_rules_file("jsondecode")
-        return _empty_rules()
-    except Exception as e:
-        logging.error(f"mastodon_control_bot: Fehler beim Laden der Regeln: {e}")
-        return _empty_rules()
+    data.setdefault("users", {})
+    return data
 
 
 def save_rules(data: dict):
-    os.makedirs(os.path.dirname(RULES_FILE), exist_ok=True)
+    payload = data if isinstance(data, dict) else _empty_rules()
+    payload.setdefault("users", {})
     try:
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            delete=False,
-            dir=os.path.dirname(RULES_FILE),
-            prefix=".tmp_mastorules_"
-        ) as tmp:
-            json.dump(data, tmp)
-            tmp.flush()
-            os.fsync(tmp.fileno())
-            tmp_path = tmp.name
-        os.replace(tmp_path, RULES_FILE)
+        state_store.save_mastodon_rules(payload)
     except Exception as e:
         logging.error(f"mastodon_control_bot: Fehler beim Speichern der Regeln: {e}")
 
 
 def _reset_rules_file(reason: str):
-    try:
-        if os.path.exists(RULES_FILE):
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = f"{RULES_FILE}.{ts}.bak"
-            shutil.copy2(RULES_FILE, backup_path)
-    except Exception as e:
-        logging.error(f"mastodon_control_bot: Backup der Regeln fehlgeschlagen ({reason}): {e}")
     try:
         save_rules(_empty_rules())
     except Exception as e:
@@ -903,7 +871,7 @@ def build_status_text() -> str:
             BOT_LOG_FILE,
             bot_groups,
             since,
-            levels=("ERROR", "WARNING")
+            levels=("ERROR",)
         )
 
         lines = []
@@ -911,7 +879,7 @@ def build_status_text() -> str:
         lines.append(f"Bluesky-Modul: {bsky_state}")
         lines.append(f"Nitter-Modul: {nitter_state}")
         lines.append("")
-        lines.append("Fehler/Warnungen (letzte 24 Stunden):")
+        lines.append("Fehler (letzte 24 Stunden):")
         lines.append("")
 
         for botname in bot_groups:

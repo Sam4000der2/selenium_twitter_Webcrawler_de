@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os
 import time
+import argparse
 import logging
 import asyncio
 import hashlib
-import tempfile
 import re
 
 import feedparser
@@ -17,6 +16,7 @@ import pytz
 # die erwartet async main(new_tweets) aufzurufen.
 import telegram_bot
 import mastodon_bot
+import state_store
 
 # -------------------------
 # Logging configuration
@@ -36,7 +36,7 @@ FEEDS = [
     {
         "name": "VIZ Berlin",
         "url": "https://bsky.app/profile/vizberlin.bsky.social/rss",
-        "file": "/home/sascha/bots/viz_berlin_entries.txt"
+        "storage_key": "viz_berlin"
         # Optional: "max_entries": 200
     }
     # Hier weitere Feeds hinzufügen
@@ -45,50 +45,37 @@ FEEDS = [
 # Grundeinstellungen zur History-Größe (kann in FEEDS per "max_entries" pro Feed überschrieben werden)
 MIN_KEEP = 20        # mindestens so viele IDs behalten (falls Feed sehr klein ist)
 MAX_KEEP_CAP = 1000  # absolute Obergrenze
+MAX_ENTRY_AGE_SECONDS = 3 * 60 * 60  # nur Einträge der letzten 3 Stunden berücksichtigen
 
 PLACEHOLDER_MARKERS = [
     "[contains quote post or other embedded content]"
 ]
 
 # -------------------------
-# Hilfsfunktionen: Lesen/Schreiben (eine URL pro Zeile)
+# Hilfsfunktionen: Lesen/Schreiben aus der gemeinsamen DB
 # -------------------------
-def load_saved_ids(file_path):
+def load_saved_ids(feed_key: str):
     """
-    Liest gespeicherte URLs (eine URL pro Zeile).
+    Liest gespeicherte URLs aus der DB.
     Liefert Liste (Strings), oder [] wenn Datei fehlt/leer/Fehler.
     """
-    if not os.path.exists(file_path):
-        logging.info(f"Datei {file_path} nicht gefunden. Starte mit leerer Liste.")
-        return []
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            lines = [line.strip() for line in f if line.strip()]
-        logging.info(f"Loaded {len(lines)} saved links from {file_path}")
-        return lines
-    except Exception as e:
-        logging.error(f"bsky_bot: Fehler beim Lesen der Datei {file_path}: {e}")
-        return []
+    entries = state_store.load_bsky_entries(feed_key)
+    if entries:
+        logging.info(f"Loaded {len(entries)} saved links from DB key {feed_key}")
+    else:
+        logging.info(f"Keine gespeicherten Links für DB key {feed_key}, starte leer.")
+    return entries
 
-def save_ids(ids_list, file_path):
+
+def save_ids(ids_list, feed_key: str):
     """
-    Speichert eine Liste von URLs, je eine pro Zeile. Atomar (tmp -> replace).
+    Speichert eine Liste von URLs in der DB.
     """
     try:
-        dirpath = os.path.dirname(file_path) or "."
-        os.makedirs(dirpath, exist_ok=True)
-        # write to a temp file in the same directory, then atomically replace
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=dirpath, prefix=".tmp_") as tmpf:
-            for item in ids_list:
-                if item:
-                    tmpf.write(str(item).strip() + "\n")
-            tmpname = tmpf.name
-            tmpf.flush()
-            os.fsync(tmpf.fileno())
-        os.replace(tmpname, file_path)
-        logging.info(f"Saved {len(ids_list)} links to {file_path}")
+        state_store.save_bsky_entries(feed_key, ids_list)
+        logging.info(f"Saved {len(ids_list)} links to DB key {feed_key}")
     except Exception as e:
-        logging.error(f"bsky_bot: Fehler beim Schreiben der Datei {file_path}: {e}")
+        logging.error(f"bsky_bot: Fehler beim Schreiben der Einträge für {feed_key}: {e}")
 
 # -------------------------
 # ID/Time helpers
@@ -147,18 +134,19 @@ def clean_description(desc: str) -> str:
 # -------------------------
 # Feed Parsing: Link-basiert + Startup 30min logic
 # -------------------------
-def parse_feed(feed_config):
+def parse_feed(feed_config, debug: bool = False):
     """
     Parst einen Feed. Vergleicht ausschließlich über link.
     Beim Start: falls keine gespeicherten Links vorhanden sind, werden
-    alle Einträge, die älter als 30 Minuten sind, als gelesen markiert und gespeichert.
+    alle Einträge, die älter als 3 Stunden sind, als gelesen markiert und gespeichert.
     Rückgabe: Liste neuer Einträge (dict)
     """
     feed_name = feed_config["name"]
     feed_url = feed_config["url"]
-    entries_file = feed_config["file"]
+    feed_key = feed_config.get("storage_key") or feed_name
 
     try:
+        now = time.time()
         logging.info(f"Überprüfe Feed: {feed_name} ({feed_url})")
         feed = feedparser.parse(feed_url)
 
@@ -178,12 +166,11 @@ def parse_feed(feed_config):
             desired_keep = min(max(len(entries_sorted), MIN_KEEP), MAX_KEEP_CAP)
 
         # Lade gespeicherte Links (eine pro Zeile)
-        saved_ids = load_saved_ids(entries_file)
+        saved_ids = load_saved_ids(feed_key)
 
-        # Wenn beim Start keine gespeicherten Links vorhanden sind: markiere ältere Einträge (30min) als gelesen
+        # Wenn beim Start keine gespeicherten Links vorhanden sind: markiere ältere Einträge (3h) als gelesen
         if not saved_ids:
-            now = time.time()
-            cutoff = 30 * 60  # 30 Minuten in Sekunden
+            cutoff = MAX_ENTRY_AGE_SECONDS
             initial_saved = []
             for item in entries_sorted:
                 ts = _get_parsed_time(item)
@@ -193,11 +180,12 @@ def parse_feed(feed_config):
                         initial_saved.append(lid)
             if initial_saved:
                 # speichere die als gelesen markierten Links (eine pro Zeile)
-                save_ids(initial_saved, entries_file)
+                if not debug:
+                    save_ids(initial_saved, feed_key)
                 saved_ids = initial_saved
-                logging.info(f"Startup: {len(initial_saved)} alte Einträge (>30min) als gelesen markiert for {feed_name}")
+                logging.info(f"Startup: {len(initial_saved)} alte Einträge (>3h) als gelesen markiert for {feed_name}")
             else:
-                logging.info(f"Startup: keine alten Einträge (>30min) zum Markieren für {feed_name}")
+                logging.info(f"Startup: keine alten Einträge (>3h) zum Markieren für {feed_name}")
 
         saved_set = set(saved_ids)
         new_entries = []
@@ -206,6 +194,11 @@ def parse_feed(feed_config):
         for item in entries_sorted:
             item_id = _make_canonical_id_from_parsed(item)
             all_ids.append(item_id)
+
+            ts = _get_parsed_time(item)
+            if ts and (now - ts) > MAX_ENTRY_AGE_SECONDS:
+                logging.debug(f"Überspringe alten Eintrag (>3h) für {feed_name}: {item_id}")
+                continue
 
             if item_id not in saved_set:
                 entry = {
@@ -218,6 +211,7 @@ def parse_feed(feed_config):
                     "feed_name": feed_name
                 }
                 new_entries.append(entry)
+                saved_set.add(item_id)
 
         # Entferne Duplikate in all_ids, dabei Reihenfolge beibehalten (neueste zuerst)
         seen = set()
@@ -228,7 +222,8 @@ def parse_feed(feed_config):
                 unique_all_ids.append(i)
 
         # Schreibe die History (neueste oben), auf desired_keep trimmen
-        save_ids(unique_all_ids[:desired_keep], entries_file)
+        if not debug:
+            save_ids(unique_all_ids[:desired_keep], feed_key)
         logging.info(f"Feed {feed_name}: {len(new_entries)} neue Einträge, history-size={len(unique_all_ids[:desired_keep])}")
 
         return new_entries
@@ -276,13 +271,13 @@ Link: {entry.get('link', '')}
 # -------------------------
 # Hauptlogik: check_all_feeds + main loop
 # -------------------------
-def check_all_feeds():
+def check_all_feeds(debug: bool = False):
     """Prüft alle konfigurierten Feeds auf neue Einträge."""
     total_new_entries = 0
     tweet_data = []
 
     for feed_config in FEEDS:
-        new_entries = parse_feed(feed_config)
+        new_entries = parse_feed(feed_config, debug=debug)
 
         if new_entries:
             total_new_entries += len(new_entries)
@@ -294,6 +289,7 @@ def check_all_feeds():
                 description = clean_description(entry.get("description", ""))
                 posted_time = format_post_date(entry.get("pubDate", ""))  # Zeitformatierung vornehmen
                 tweet_data.append({
+                    "feed_name": feed_config["name"],
                     "user": user,
                     "username": user,
                     "content": description,
@@ -324,10 +320,81 @@ async def main():
                 logging.error(f"bsky_bot: An error occurred in mastodon_bot: {e}")
         await asyncio.sleep(60)
 
-if __name__ == '__main__':
+def run_debug():
+    logging.info("Debug-Modus: einmaliger Lauf, keine Zustellung oder DB-Updates.")
+    new_tweets = check_all_feeds(debug=True)
+    if not new_tweets:
+        print("Debug: keine neuen Einträge (<=3h) gefunden; gespeicherte IDs wurden berücksichtigt.")
+        return
+
+    print(f"Debug: {len(new_tweets)} neue Einträge (keine Zustellung, gespeicherte IDs berücksichtigt):")
+    for entry in new_tweets:
+        feed = entry.get("feed_name") or entry.get("user") or "Unbekannt"
+        posted = entry.get("posted_time") or ""
+        link = entry.get("var_href") or ""
+        snippet = (entry.get("content") or "").strip().replace("\n", " ")
+        if len(snippet) > 160:
+            snippet = snippet[:157] + "..."
+        print(f"- {feed} | {posted} | {link}")
+        if snippet:
+            print(f"  Text: {snippet}")
+
+
+def run_no_sending():
+    logging.info("No-send-Modus: einmaliger Lauf, DB/History wird aktualisiert, keine Zustellung.")
+    new_tweets = check_all_feeds(debug=False)
+    if not new_tweets:
+        print("No-send: keine neuen Einträge (<=3h) gefunden; DB wurde ggf. aktualisiert.")
+        return
+
+    print(f"No-send: {len(new_tweets)} neue Einträge (DB aktualisiert, keine Zustellung):")
+    for entry in new_tweets:
+        feed = entry.get("feed_name") or entry.get("user") or "Unbekannt"
+        posted = entry.get("posted_time") or ""
+        link = entry.get("var_href") or ""
+        snippet = (entry.get("content") or "").strip().replace("\n", " ")
+        if len(snippet) > 160:
+            snippet = snippet[:157] + "..."
+        print(f"- {feed} | {posted} | {link}")
+        if snippet:
+            print(f"  Text: {snippet}")
+
+
+def _parse_args():
+    parser = argparse.ArgumentParser(description="Bluesky Feed Monitor")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Einmaliger Lauf ohne Zustellung; nutzt gespeicherte Einträge, schreibt aber keine neuen."
+    )
+    parser.add_argument(
+        "--nosending", "--no-send", "--dry-run",
+        dest="no_send",
+        action="store_true",
+        help="Einmaliger Lauf ohne Zustellung; DB/History wird aktualisiert."
+    )
+    args = parser.parse_args()
+    if args.debug and args.no_send:
+        parser.error("--debug und --no-send können nicht gemeinsam verwendet werden.")
+    return args
+
+
+def _run():
+    args = _parse_args()
+    if args.debug:
+        run_debug()
+        return
+    if args.no_send:
+        run_no_sending()
+        return
+
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         logging.info("Bot beendet (KeyboardInterrupt).")
     except Exception as e:
         logging.error(f"bsky_bot: Uncaught exception in main: {e}")
+
+
+if __name__ == '__main__':
+    _run()

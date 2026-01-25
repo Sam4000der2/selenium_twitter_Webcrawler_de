@@ -1,9 +1,9 @@
-import csv
 import logging
-import os
 import re
 from datetime import datetime, timedelta
 from typing import List
+
+import state_store
 
 logger = logging.getLogger(__name__)
 
@@ -75,11 +75,9 @@ class GeminiModelManager:
     def __init__(
         self,
         client,
-        cache_path: str = "/home/sascha/bots/gemini_models.csv",
         refresh_days: int = 7
     ):
         self.client = client
-        self.cache_path = cache_path
         self.refresh_days = max(1, refresh_days)
         self.statuses: dict[str, dict] = {}
         self.models: List[str] = []
@@ -89,59 +87,55 @@ class GeminiModelManager:
 
     # ----------------------- Cache Handling -----------------------
     def _load_cache(self):
-        if not os.path.exists(self.cache_path):
+        data = state_store.load_gemini_cache()
+        if not isinstance(data, dict):
             return
-        try:
-            with open(self.cache_path, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    name = (row.get("name") or "").strip()
-                    if not name:
-                        continue
-                    if name == "__meta__":
-                        ts = row.get("last_update") or ""
-                        try:
-                            self.last_refresh = datetime.fromisoformat(ts)
-                        except Exception:
-                            self.last_refresh = None
-                        continue
-                    status = (row.get("status") or "ok").strip()
-                    last_update = row.get("last_update") or ""
-                    try:
-                        last_dt = datetime.fromisoformat(last_update) if last_update else None
-                    except Exception:
-                        last_dt = None
-                    self.statuses[name] = {
-                        "status": status,
-                        "last_update": last_dt,
-                        "last_error": row.get("last_error") or "",
-                    }
-                # Modellliste: Reihenfolge im Cache beibehalten, wenn vorhanden
-                self.models = [n for n in self.statuses.keys()]
-        except Exception as e:
-            logger.error(f"gemini_helper: Konnte Cache nicht laden: {e}")
+        models_cached = data.get("models") if isinstance(data, dict) else None
+        if isinstance(models_cached, list):
+            self.models = [m for m in models_cached if m]
+        statuses = data.get("statuses", {}) if isinstance(data.get("statuses"), dict) else {}
+        last_refresh_raw = data.get("last_refresh")
+        if last_refresh_raw:
+            try:
+                self.last_refresh = (
+                    last_refresh_raw if isinstance(last_refresh_raw, datetime) else datetime.fromisoformat(last_refresh_raw)
+                )
+            except Exception:
+                self.last_refresh = None
+        for name, row in statuses.items():
+            status = (row.get("status") or "ok") if isinstance(row, dict) else "ok"
+            last_update = row.get("last_update") if isinstance(row, dict) else None
+            try:
+                last_dt = (
+                    last_update
+                    if isinstance(last_update, datetime)
+                    else datetime.fromisoformat(last_update) if isinstance(last_update, str) else None
+                )
+            except Exception:
+                last_dt = None
+            self.statuses[name] = {
+                "status": status,
+                "last_update": last_dt,
+                "last_error": row.get("last_error", "") if isinstance(row, dict) else "",
+            }
+        if not self.models:
+            self.models = [n for n in self.statuses.keys()]
 
     def _save_cache(self):
         try:
-            os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
-            fieldnames = ["name", "status", "last_update", "last_error"]
-            with open(self.cache_path, "w", encoding="utf-8", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerow({
-                    "name": "__meta__",
-                    "status": "last_refresh",
-                    "last_update": (self.last_refresh.isoformat() if self.last_refresh else ""),
-                    "last_error": "",
-                })
-                for name in self.models:
-                    st = self.statuses.get(name, {})
-                    writer.writerow({
-                        "name": name,
-                        "status": st.get("status", "ok"),
-                        "last_update": st.get("last_update").isoformat() if st.get("last_update") else "",
-                        "last_error": st.get("last_error", ""),
-                    })
+            payload = {
+                "last_refresh": self.last_refresh.isoformat() if self.last_refresh else "",
+                "statuses": {},
+                "models": self.models,
+            }
+            for name in self.models:
+                st = self.statuses.get(name, {})
+                payload["statuses"][name] = {
+                    "status": st.get("status", "ok"),
+                    "last_update": st.get("last_update").isoformat() if st.get("last_update") else "",
+                    "last_error": st.get("last_error", ""),
+                }
+            state_store.save_gemini_cache(payload)
         except Exception as e:
             logger.error(f"gemini_helper: Konnte Cache nicht speichern: {e}")
 
