@@ -3,6 +3,7 @@ import os
 import telegram
 import json
 import logging
+import re
 
 # DATA_FILE = 'data.json'
 DATA_FILE = '/home/sascha/bots/data.json'
@@ -30,6 +31,18 @@ if not BOT_TOKEN:
     logging.error("telegram_bot: ENV 'telegram_token' ist nicht gesetzt.")
 if admin is None:
     logging.error("telegram_bot: ENV 'telegram_admin' ist nicht gesetzt oder keine gültige Zahl.")
+
+
+_X_LINK_PREFIX = re.compile(r"(?i)\bhttps?://x\.com")
+_X_LINK_BARE = re.compile(r"(?i)\bx\.com(?=/)")
+
+
+def replace_x_links_with_nitter(text: str) -> str:
+    if not text:
+        return ""
+    replaced = _X_LINK_PREFIX.sub("https://nitter.net", text)
+    replaced = _X_LINK_BARE.sub("https://nitter.net", replaced)
+    return replaced
 
 
 def load_data():
@@ -101,11 +114,11 @@ async def main(new_tweets):
     try:
         for n, tweet in enumerate(new_tweets, start=1):
             username = tweet['username']
-            content = tweet['content']
+            content = replace_x_links_with_nitter(tweet['content'])
             posted_time = tweet['posted_time']
-            var_href = tweet['var_href'].replace('x.com', 'nitter.net')
+            var_href = replace_x_links_with_nitter(tweet['var_href'])
             images = tweet['images']
-            extern_urls_as_string = tweet['extern_urls_as_string']
+            extern_urls_as_string = replace_x_links_with_nitter(tweet['extern_urls_as_string'])
 
             message = (
                 f"{username} hat einen neuen Tweet veröffentlicht:\n\n"

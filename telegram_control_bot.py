@@ -16,6 +16,9 @@ from mastodon_text_utils import split_mastodon_text
 BOT_TOKEN = os.environ.get("telegram_token")
 admin_env = os.environ.get("telegram_admin")
 
+LOG_DIR = '/home/sascha/bots/logs'
+MAX_ARCHIVES = 3
+
 # Admin-Chat-ID robust parsen (Telegram liefert ints)
 try:
     admin = int(admin_env) if admin_env is not None and str(admin_env).strip() != "" else None
@@ -106,6 +109,246 @@ def _run_cmd_no_sudo(cmd: list[str], timeout: int = 3) -> tuple[int, str]:
 def _looks_like_bus_error(output: str) -> bool:
     o = output or ""
     return any(m in o for m in BUS_ERROR_MARKERS)
+
+def get_log_files() -> list[str]:
+    """
+    Liefert:
+      - aktuelle Logdatei
+      - bis zu MAX_ARCHIVES archivierte Logs (neu -> alt)
+    Nur vorhandene Dateien.
+    """
+    files: list[str] = []
+
+    # aktuelle Logdatei
+    if os.path.exists(BOT_LOG_FILE):
+        files.append(BOT_LOG_FILE)
+
+    # archivierte Logs
+    if os.path.isdir(LOG_DIR):
+        base = os.path.basename(BOT_LOG_FILE)
+        archives = []
+
+        for name in os.listdir(LOG_DIR):
+            if name.startswith(base):
+                full = os.path.join(LOG_DIR, name)
+                if os.path.isfile(full):
+                    archives.append(full)
+
+        # nach Änderungszeit sortieren (neu -> alt)
+        archives.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        files.extend(archives[:MAX_ARCHIVES])
+
+    return files
+
+def count_errors_since_grouped_multi(
+    log_files: list[str],
+    bots: list[str],
+    since_dt: datetime,
+    levels: tuple[str, ...]
+) -> dict[str, dict[str, int]]:
+    """
+    Aggregiert count_errors_since_grouped über mehrere Logdateien.
+    """
+    merged: dict[str, dict[str, int]] = {b: {} for b in bots}
+
+    for path in log_files:
+        grouped = count_errors_since_grouped(
+            path,
+            bots,
+            since_dt,
+            levels=levels
+        )
+
+        for bot, msgs in grouped.items():
+            for msg, cnt in msgs.items():
+                merged[bot][msg] = merged[bot].get(msg, 0) + cnt
+
+    return merged
+
+
+def normalize_archiv_mode(raw: str) -> str | None:
+    """
+    Akzeptiert:
+      error, e
+      warning, w
+      info, i
+      all, a
+    Groß-/Kleinschreibung egal
+    """
+    if not raw:
+        return None
+
+    r = raw.strip().lower()
+
+    mapping = {
+        "e": "error",
+        "error": "error",
+
+        "w": "warning",
+        "warn": "warning",
+        "warning": "warning",
+
+        "i": "info",
+        "info": "info",
+
+        "a": "all",
+        "all": "all",
+    }
+
+    return mapping.get(r)
+
+def parse_archiv_args(args: list[str]) -> tuple[int | None, str | None]:
+    """
+    Erlaubt:
+      ["1", "error"]
+      ["1e"]
+      ["2w"]
+      ["3", "i"]
+    """
+    if not args:
+        return None, None
+
+    # Fall: ["1e"]
+    if len(args) == 1:
+        m = re.fullmatch(r"(\d+)([a-zA-Z]+)", args[0])
+        if m:
+            idx = int(m.group(1))
+            mode = normalize_archiv_mode(m.group(2))
+            return idx, mode
+
+    # Fall: ["1", "error"]
+    if len(args) >= 2 and args[0].isdigit():
+        idx = int(args[0])
+        mode = normalize_archiv_mode(args[1])
+        return idx, mode
+
+    return None, None
+
+async def admin_archiv_list(bot, chat_id: int):
+    """
+    Zeigt verfügbare Logdateien für /archiv an.
+    """
+    log_files = get_log_files()
+
+    if not log_files:
+        await bot.send_message(chat_id, "Keine Logdateien gefunden.")
+        return
+
+    lines = []
+    lines.append("Verfügbare Logdateien:")
+    lines.append("")
+
+    for i, path in enumerate(log_files, start=1):
+        try:
+            mtime = datetime.fromtimestamp(os.path.getmtime(path)).strftime("%d.%m.%Y %H:%M")
+            lines.append(f"{i}) {os.path.basename(path)} (Stand: {mtime})")
+        except Exception:
+            lines.append(f"{i}) {os.path.basename(path)}")
+
+    lines.append("")
+    lines.append("Aufruf:")
+    lines.append("/archiv <index> <error|warning|info|all>")
+    lines.append("Kurzform: /archiv 1e /archiv 2w /archiv 3i /archiv 4a")
+
+    await bot.send_message(chat_id, "\n".join(lines))
+
+async def admin_archiv_show(bot, chat_id: int, index: int, mode: str):
+    """
+    Zeigt Inhalte einer archivierten Logdatei.
+    """
+    log_files = get_log_files()
+
+    if index < 1 or index > len(log_files):
+        await bot.send_message(chat_id, f"Ungültiger Index: {index}")
+        return
+
+    path = log_files[index - 1]
+
+    level_map = {
+        "error": ("ERROR",),
+        "warning": ("WARNING",),
+        "info": ("INFO",),
+        "all": ("ERROR", "WARNING", "INFO"),
+    }
+
+    levels = level_map.get(mode)
+    if not levels:
+        await bot.send_message(chat_id, f"Unbekannter Modus: {mode}")
+        return
+
+    lines = []
+    lines.append(f"Logdatei: {os.path.basename(path)}")
+    lines.append(f"Modus: {mode.upper()}")
+    lines.append("")
+
+    count = 0
+    for line in _reverse_read_lines(path):
+        if not line.strip():
+            continue
+
+        ts, rest = parse_ts_and_rest(line)
+        if ts is None:
+            continue
+
+        lvl, _ = split_level_and_body(rest)
+        if lvl and lvl.upper() in levels:
+            lines.append(_trim_long(line.strip()))
+            count += 1
+
+        if count >= 50:
+            break
+
+    if count == 0:
+        lines.append("— keine passenden Einträge gefunden —")
+
+    text = "\n".join(lines)
+    for part in split_telegram_text(text):
+        await bot.send_message(chat_id, part)
+
+
+
+def read_last_errors_grouped_multi(
+    log_files: list[str],
+    per_group: int,
+    days: int,
+    levels: tuple[str, ...]
+) -> dict[str, list[str]]:
+    cutoff = datetime.now() - timedelta(days=days)
+    grouped: dict[str, list[str]] = {k: [] for k in ADMIN_ERROR_GROUPS}
+    level_set = {lvl.upper() for lvl in levels}
+
+    detection_bots = [g for g in ADMIN_ERROR_GROUPS if g != "nicht_zuordenbar"]
+
+    for path in log_files:
+        if not os.path.exists(path):
+            continue
+
+        for line in _reverse_read_lines(path):
+            line_s = line.strip()
+            if not line_s:
+                continue
+
+            ts, rest = parse_ts_and_rest(line_s)
+            if ts is None:
+                continue
+
+            if ts < cutoff:
+                break
+
+            level, body = split_level_and_body(rest)
+            if level not in level_set:
+                continue
+
+            bot, _ = detect_bot_and_message(body, detection_bots)
+            key = bot if bot in grouped else "nicht_zuordenbar"
+
+            if len(grouped[key]) < per_group:
+                grouped[key].append(_trim_long(line_s))
+
+            if all(len(grouped[k]) >= per_group for k in ADMIN_ERROR_GROUPS):
+                return grouped
+
+    return grouped
 
 
 def _pgrep_any(patterns: list[str]) -> tuple[bool, str]:
@@ -433,20 +676,25 @@ async def status_command(bot, chat_id: int, admin_view: bool = False):
             ]
 
         since = datetime.now() - timedelta(hours=24)
-        grouped_errors = count_errors_since_grouped(
-            BOT_LOG_FILE,
+
+        log_files = get_log_files()
+
+        grouped_errors = count_errors_since_grouped_multi(
+            log_files,
             bot_groups,
             since,
             levels=("ERROR",)
         )
+
         grouped_warnings = None
         if admin_view:
-            grouped_warnings = count_errors_since_grouped(
-                BOT_LOG_FILE,
+            grouped_warnings = count_errors_since_grouped_multi(
+                log_files,
                 bot_groups,
                 since,
                 levels=("WARNING",)
             )
+
 
         lines = []
         lines.append(f"Twitter-Modul: {twitter_state}")
@@ -494,7 +742,13 @@ async def admin_errors_command(bot, chat_id: int):
     letzte 3 ERROR je Gruppe (letzte 3 Tage) – gut lesbar formatiert
     """
     try:
-        grouped = read_last_errors_grouped(BOT_LOG_FILE, per_group=3, days=ADMIN_ERRORS_DAYS)
+        grouped = read_last_errors_grouped_multi(
+            get_log_files(),
+            per_group=3,
+            days=ADMIN_ERRORS_DAYS,
+            levels=("ERROR",)
+        )
+
 
         lines = []
         lines.append(f"Log: {BOT_LOG_FILE}")
@@ -531,8 +785,8 @@ async def admin_warnings_command(bot, chat_id: int):
     letzte 3 WARNINGS je Gruppe (letzte 3 Tage) – gut lesbar formatiert
     """
     try:
-        grouped = read_last_errors_grouped(
-            BOT_LOG_FILE,
+        grouped = read_last_errors_grouped_multi(
+            get_log_files(),
             per_group=3,
             days=ADMIN_ERRORS_DAYS,
             levels=("WARNING",)
@@ -565,6 +819,48 @@ async def admin_warnings_command(bot, chat_id: int):
     except Exception as e:
         logging.error(f"telegram_control_bot: Error in admin_warnings_command: {e}")
         await bot.send_message(chat_id=chat_id, text="Warnungen konnten nicht gelesen werden.")
+
+
+async def admin_infos_command(bot, chat_id: int):
+    """
+    /warnung (oder /warnungen /warn /warning) nur Admin:
+    letzte 3 WARNINGS je Gruppe (letzte 3 Tage) – gut lesbar formatiert
+    """
+    try:
+        grouped = read_last_errors_grouped_multi(
+            get_log_files(),
+            per_group=3,
+            days=ADMIN_ERRORS_DAYS,
+            levels=("INFO",)
+        )
+
+        lines = []
+        lines.append(f"Log: {BOT_LOG_FILE}")
+        lines.append(f"Zeitraum: letzte {ADMIN_ERRORS_DAYS} Tage")
+        lines.append("Pro Gruppe: max. 3 letzte INFO Meldungen")
+        lines.append("")
+
+        for module in ADMIN_ERROR_GROUPS:
+            warns = grouped.get(module, [])
+            lines.append(f"== {module} ==")
+
+            if not warns:
+                lines.append("— keine INFO Meldungen —")
+                lines.append("")
+                continue
+
+            for i, warnline in enumerate(warns, start=1):
+                lines.append(f"{i}) {warnline}")
+
+            lines.append("")
+
+        out = "\n".join(lines).strip()
+        for part in split_telegram_text(out):
+            await bot.send_message(chat_id=chat_id, text=part)
+
+    except Exception as e:
+        logging.error(f"telegram_control_bot: Error in admin_infos_command: {e}")
+        await bot.send_message(chat_id=chat_id, text="INFO Meldungen konnten nicht gelesen werden.")
 
 
 # ----------------------------
@@ -770,8 +1066,10 @@ async def admin_help(bot, chat_id):
     help_text += "/me Dein Text an dich selber gesendet, zum testen\n\n"
     help_text += "/telegram Dein Text wird an alle Telegram Bot Nutzer gesendet\n\n"
     help_text += "/mastodon Dein Text wird an alle Mastodon Bot Nutzer gesendet\n\n"
-    help_text += f"/errors (oder /error oder /fehler) zeigt die letzten 3 ERROR je Gruppe (letzte {ADMIN_ERRORS_DAYS} Tage)\n"
-    help_text += f"/warnung (oder /warnungen /warn /warning) zeigt die letzten 3 WARNINGS je Gruppe (letzte {ADMIN_ERRORS_DAYS} Tage)"
+    help_text += f"/errors (oder /error oder /fehler) zeigt die letzten 3 ERROR je Gruppe (letzte {ADMIN_ERRORS_DAYS} Tage)\n\n"
+    help_text += f"/warnung (oder /warnungen /warn /warning) zeigt die letzten 3 WARNINGS je Gruppe (letzte {ADMIN_ERRORS_DAYS} Tage)\n\n"
+    help_text += f"/info zeigt die letzten 3 INFO Meldungen je Gruppe (letzte {ADMIN_ERRORS_DAYS} Tage)\n\n"
+    help_text += f"/archiv zeigt den Inhalt spezifscher Logdateien an. Kurz /archiv <index> <error|warning|info|all>"
     try:
         await bot.send_message(chat_id=chat_id, text=help_text)
     except Exception as e:
@@ -909,7 +1207,7 @@ async def start_bot():
             updates = await bot.get_updates(offset=update_id)
             backoff_seconds = 1  # Reset nach erfolgreichem Abruf
         except Exception as e:
-            logging.error(f"telegram_control_bot: Error getting updates in start_bot: {e}")
+            logging.warning(f"telegram_control_bot: Error getting updates in start_bot: {e}")
             await asyncio.sleep(backoff_seconds)
             backoff_seconds = min(backoff_seconds * 2, 300)
             continue
@@ -972,6 +1270,8 @@ async def process_update(bot, update):
                     await admin_errors_command(bot, chat_id)
                 elif command in ('/warnung', '/warnungen', '/warn', '/warning'):
                     await admin_warnings_command(bot, chat_id)
+                elif command in ('/info', '/information'):
+                    await admin_infos_command(bot, chat_id)
                 elif command == '/me' and message_content:
                     await admin_send_me(message_content)
                 elif command.startswith('/mast') and message_content:
@@ -983,6 +1283,26 @@ async def process_update(bot, update):
                 elif command in ('/help', '/hilfe'):
                     await help_command(bot, chat_id)
                     await admin_help(bot, chat_id)
+                elif command in ('/archiv', '/archive', '/ar', "/arc"):
+                    idx, mode = parse_archiv_args(args)
+
+                    # nur /archiv
+                    if idx is None and mode is None:
+                        await admin_archiv_list(bot, chat_id)
+                        return
+
+                    if idx is None or mode is None:
+                        await bot.send_message(
+                            chat_id,
+                            "Syntax:\n"
+                            "/archiv\n"
+                            "/archiv <index> <error|warning|info|all>\n"
+                            "Kurzform: /archiv 1e /archiv 2w /archiv 3i /archiv 4a"
+                        )
+                        return
+
+                    await admin_archiv_show(bot, chat_id, index=idx, mode=mode)
+
                 else:
                     await admin_help(bot, chat_id)
 

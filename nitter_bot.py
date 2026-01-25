@@ -2,7 +2,6 @@
 
 import argparse
 import asyncio
-import csv
 import html
 import json
 import logging
@@ -10,7 +9,7 @@ import os
 import re
 import time
 from datetime import datetime, timedelta, time as dtime
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import feedparser
 from dateutil.parser import parse
@@ -19,16 +18,15 @@ import requests
 
 import telegram_bot
 import mastodon_bot
+import state_store
 
 BASE_DIR = os.environ.get("BOTS_BASE_DIR", "/home/sascha/bots")
 LOG_PATH = os.path.join(BASE_DIR, "twitter_bot.log")
-LIST_FILE = os.path.join(BASE_DIR, "List_of_Twitter_users.txt")
-ALT_LIST_FILE = os.path.join(os.path.dirname(__file__), "List_of_Twitter_users.txt")
-HISTORY_FILE = os.path.join(BASE_DIR, "nitter_existing_tweets.txt")
-USERS_CSV = os.path.join(BASE_DIR, "nitter_users.csv")
-ALT_USERS_CSV = os.path.join(os.path.dirname(__file__), "nitter_users.csv")
 POLL_INTERVAL = int(os.environ.get("NITTER_POLL_INTERVAL", "60"))
 HISTORY_LIMIT = int(os.environ.get("NITTER_HISTORY_LIMIT", "200"))
+MAX_ITEM_AGE_SECONDS = max(
+    0, int(os.environ.get("NITTER_MAX_ITEM_AGE_SECONDS", str(2 * 60 * 60)))
+)
 
 DEFAULT_INTERVAL = 15 * 60  # Sekunden
 USER_OVERRIDES = {
@@ -38,6 +36,17 @@ USER_OVERRIDES = {
         "active_end": "22:05",
     }
 }
+DEFAULT_USER_CONFIGS = [
+    {"username": "SBahnBerlin", "interval_seconds": 120, "active_start": "05:55", "active_end": "22:05"},
+    {"username": "bpol_11", "interval_seconds": 900, "active_start": "", "active_end": ""},
+    {"username": "DB_Info", "interval_seconds": 900, "active_start": "", "active_end": ""},
+    {"username": "DBRegio_BB", "interval_seconds": 900, "active_start": "", "active_end": ""},
+    {"username": "ViP_Potsdam", "interval_seconds": 900, "active_start": "", "active_end": ""},
+    {"username": "bpol_b_einsatz", "interval_seconds": 900, "active_start": "", "active_end": ""},
+    {"username": "bpol_b", "interval_seconds": 900, "active_start": "", "active_end": ""},
+    {"username": "PolizeiBerlin_E", "interval_seconds": 900, "active_start": "", "active_end": ""},
+    {"username": "Berliner_Fw", "interval_seconds": 900, "active_start": "", "active_end": ""},
+]
 
 BERLIN_TZ = pytz.timezone("Europe/Berlin")
 
@@ -46,6 +55,17 @@ NITTER_BASE_URL = os.environ.get("NITTER_BASE_URL", "http://localhost:8081").rst
 _base_netloc = urlparse(NITTER_BASE_URL).netloc or urlparse(NITTER_BASE_URL).path
 _base_host = _base_netloc.split(":")[0]
 _base_scheme = urlparse(NITTER_BASE_URL).scheme or "http"
+INVIDIOUS_ENABLED_DEFAULT = False  # Invidious-Umschreibung aktivieren/deaktivieren
+INVIDIOUS_BASE_URL_DEFAULT = ""  # z. B. "https://yewtu.be"
+INVIDIOUS_ENABLED = (
+    os.environ.get("INVIDIOUS_ENABLED", "true" if INVIDIOUS_ENABLED_DEFAULT else "false")
+    .strip()
+    .lower()
+    in {"1", "true", "yes", "on"}
+)
+INVIDIOUS_BASE_URL = os.environ.get("INVIDIOUS_BASE_URL", INVIDIOUS_BASE_URL_DEFAULT).strip().rstrip("/")
+if INVIDIOUS_BASE_URL and not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", INVIDIOUS_BASE_URL):
+    INVIDIOUS_BASE_URL = "https://" + INVIDIOUS_BASE_URL
 INTERNAL_HOSTS = {h for h in (_base_netloc, _base_host, "localhost", "127.0.0.1") if h}
 
 URL_RE = re.compile(r"https?://[^\s<>\"']+")
@@ -62,29 +82,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
 )
 
-
-def _resolve_list_file() -> str:
-    if os.path.exists(LIST_FILE):
-        return LIST_FILE
-    if os.path.exists(ALT_LIST_FILE):
-        return ALT_LIST_FILE
-    return LIST_FILE
-
-
-def load_usernames():
-    path = _resolve_list_file()
-    if not os.path.exists(path):
-        logging.error(f"nitter_bot: List_of_Twitter_users.txt nicht gefunden unter {path}")
-        return []
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            names = [line.strip() for line in f if line.strip()]
-        return names
-    except Exception as exc:
-        logging.error(f"nitter_bot: Fehler beim Lesen von {path}: {exc}")
-        return []
-
-
 def parse_time(value: str | None) -> dtime | None:
     if not value:
         return None
@@ -96,78 +93,61 @@ def parse_time(value: str | None) -> dtime | None:
         return None
 
 
-def ensure_users_csv() -> str:
-    if os.path.exists(USERS_CSV):
-        return USERS_CSV
-    if os.path.exists(ALT_USERS_CSV):
-        return ALT_USERS_CSV
-
-    names = load_usernames()
-    if not names:
-        logging.error("nitter_bot: Keine Nutzerliste gefunden, CSV kann nicht erstellt werden.")
-        return USERS_CSV
-
-    os.makedirs(os.path.dirname(USERS_CSV) or ".", exist_ok=True)
-    try:
-        with open(USERS_CSV, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(
-                f, fieldnames=["username", "interval_seconds", "active_start", "active_end"]
-            )
-            writer.writeheader()
-            for name in names:
-                override = USER_OVERRIDES.get(name.lower(), {})
-                writer.writerow(
-                    {
-                        "username": name,
-                        "interval_seconds": override.get("interval", DEFAULT_INTERVAL),
-                        "active_start": override.get("active_start", ""),
-                        "active_end": override.get("active_end", ""),
-                    }
-                )
-        logging.info(f"nitter_bot: {USERS_CSV} aus List_of_Twitter_users.txt erstellt.")
-    except Exception as exc:
-        logging.error(f"nitter_bot: Fehler beim Schreiben von {USERS_CSV}: {exc}")
-
-    return USERS_CSV
+def _generate_default_users_map() -> dict[str, dict]:
+    defaults: dict[str, dict] = {}
+    for cfg in DEFAULT_USER_CONFIGS:
+        username = (cfg.get("username") or "").strip()
+        if not username:
+            continue
+        try:
+            interval = int(cfg.get("interval_seconds") or DEFAULT_INTERVAL)
+        except Exception:
+            interval = DEFAULT_INTERVAL
+        override = USER_OVERRIDES.get(username.lower(), {})
+        defaults[username] = {
+            "interval_seconds": override.get("interval", interval),
+            "active_start": override.get("active_start", cfg.get("active_start", "")),
+            "active_end": override.get("active_end", cfg.get("active_end", "")),
+        }
+    return defaults
 
 
-def build_user_configs():
-    csv_path = ensure_users_csv()
+def _seed_default_users() -> dict[str, dict]:
+    defaults = _generate_default_users_map()
+    state_store.save_nitter_users(defaults)
+    return defaults
+
+
+def build_user_configs(persist: bool = True):
+    stored = state_store.load_nitter_users()
+    if not stored:
+        stored = _seed_default_users() if persist else _generate_default_users_map()
+
     configs = []
+    for username, cfg in (stored or {}).items():
+        uname = (username or "").strip()
+        if not uname:
+            continue
+        cfg = cfg if isinstance(cfg, dict) else {}
+        try:
+            interval = int(cfg.get("interval_seconds") or cfg.get("interval") or DEFAULT_INTERVAL)
+        except Exception:
+            interval = DEFAULT_INTERVAL
+        if interval <= 0:
+            interval = DEFAULT_INTERVAL
 
-    if not os.path.exists(csv_path):
-        logging.error(f"nitter_bot: CSV mit Nutzerintervallen fehlt: {csv_path}")
-        return configs
+        active_start = parse_time((cfg.get("active_start") or "").strip() or None)
+        active_end = parse_time((cfg.get("active_end") or "").strip() or None)
 
-    try:
-        with open(csv_path, "r", newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                username = (row.get("username") or "").strip()
-                if not username:
-                    continue
-
-                try:
-                    interval = int(row.get("interval_seconds") or DEFAULT_INTERVAL)
-                except Exception:
-                    interval = DEFAULT_INTERVAL
-                if interval <= 0:
-                    interval = DEFAULT_INTERVAL
-
-                active_start = parse_time((row.get("active_start") or "").strip() or None)
-                active_end = parse_time((row.get("active_end") or "").strip() or None)
-
-                configs.append(
-                    {
-                        "username": username,
-                        "interval": interval,
-                        "active_start": active_start,
-                        "active_end": active_end,
-                        "next_run": 0.0,
-                    }
-                )
-    except Exception as exc:
-        logging.error(f"nitter_bot: Fehler beim Lesen von {csv_path}: {exc}")
+        configs.append(
+            {
+                "username": uname,
+                "interval": interval,
+                "active_start": active_start,
+                "active_end": active_end,
+                "next_run": 0.0,
+            }
+        )
 
     return configs
 
@@ -225,6 +205,51 @@ def sanitize_status_id(value: str) -> str:
     return extracted or ""
 
 
+def clean_history_map(
+    history_map: dict[str, list[str]], per_user_limits: dict[str, int] | None = None
+) -> tuple[dict[str, list[str]], set[str], bool]:
+    """
+    Entfernt leere Einträge, dedupliziert und kürzt die History pro Nutzer.
+    Gibt die bereinigte Map, die rekonstruierten Status-IDs sowie ein Flag zurück,
+    das signalisiert, ob eine Änderung vorgenommen wurde.
+    """
+    cleaned_map: dict[str, list[str]] = {}
+    seen_ids: set[str] = set()
+    changed = False
+
+    for user, entries in (history_map or {}).items():
+        if not isinstance(entries, list):
+            continue
+
+        normalized_entries = dedupe_preserve_order(
+            [
+                (entry or "").strip()
+                for entry in entries
+                if isinstance(entry, str) and (entry or "").strip()
+            ]
+        )
+
+        limit = HISTORY_LIMIT
+        if per_user_limits:
+            try:
+                limit = max(1, int(per_user_limits.get(user, HISTORY_LIMIT)))
+            except Exception:
+                limit = HISTORY_LIMIT
+
+        trimmed_entries = normalized_entries[-limit:]
+        if trimmed_entries:
+            cleaned_map[str(user)] = trimmed_entries
+            for entry in trimmed_entries:
+                status_id = extract_status_id_from_url(entry)
+                if status_id:
+                    seen_ids.add(status_id)
+
+        if trimmed_entries != entries:
+            changed = True
+
+    return cleaned_map, seen_ids, changed
+
+
 def add_port_if_local(url: str) -> str:
     try:
         parsed = urlparse(url)
@@ -240,18 +265,97 @@ def add_port_if_local(url: str) -> str:
         return url
 
 
+def normalize_youtube_url(url: str) -> str:
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return url
+
+    netloc = (parsed.netloc or "").lower()
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    path_parts = [p for p in parsed.path.split("/") if p]
+
+    if netloc == "consent.youtube.com":
+        cont_values = query.get("continue") or []
+        if cont_values:
+            target = unquote(cont_values[0] or "")
+            if target.startswith("//"):
+                target = "https:" + target
+            return normalize_youtube_url(target)
+        return url
+
+    if netloc in {"piped.video", "www.piped.video"}:
+        netloc = "www.youtube.com"
+        parsed = parsed._replace(scheme="https", netloc=netloc)
+        path_parts = [p for p in parsed.path.split("/") if p]
+        query = parse_qs(parsed.query, keep_blank_values=True)
+
+    if netloc in {"youtu.be", "www.youtu.be"}:
+        video_id = path_parts[0] if path_parts else ""
+        return f"https://www.youtube.com/watch?v={video_id}" if video_id else "https://www.youtube.com"
+
+    if netloc.endswith("youtube.com"):
+        video_id = None
+        is_live = False
+        if path_parts[:1] == ["watch"]:
+            video_id = (query.get("v") or [None])[0]
+        elif path_parts[:1] == ["live"] and len(path_parts) >= 2:
+            video_id = path_parts[1]
+            is_live = True
+        elif path_parts[:1] == ["shorts"] and len(path_parts) >= 2:
+            video_id = path_parts[1]
+        elif path_parts[:1] == ["embed"] and len(path_parts) >= 2:
+            video_id = path_parts[1]
+        elif len(path_parts) >= 2 and path_parts[0] == "v":
+            video_id = path_parts[1]
+
+        if video_id:
+            video_id = video_id.strip()
+            if video_id:
+                if is_live:
+                    return f"https://www.youtube.com/live/{video_id}"
+                return f"https://www.youtube.com/watch?v={video_id}"
+
+    return url
+
+
 def normalize_url(url: str) -> str:
     cleaned = (url or "").strip()
     cleaned = cleaned.strip(".,;:!?()[]{}<>\"'…")
     cleaned = cleaned.replace("%E2%80%A6", "")
     if not cleaned:
         return ""
+    cleaned = re.sub(r"^https:/(?!/)", "https://", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^http:/(?!/)", "http://", cleaned, flags=re.IGNORECASE)
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", cleaned):
         cleaned = cleaned.lstrip("/")
         cleaned = f"https://{cleaned}"
     if cleaned.startswith("http://"):
         cleaned = "https://" + cleaned[len("http://") :]
+    cleaned = normalize_youtube_url(cleaned)
     return cleaned
+
+
+def replace_with_invidious(url: str) -> str:
+    """
+    Optional: ersetzt youtube.com durch konfigurierten Invidious-Host, falls gesetzt.
+    """
+    if not INVIDIOUS_ENABLED or not INVIDIOUS_BASE_URL:
+        return url
+    try:
+        parsed = urlparse(url)
+        host = (parsed.netloc or parsed.path).lower()
+        if host not in {"youtube.com", "www.youtube.com", "m.youtube.com"}:
+            return url
+
+        inv = urlparse(INVIDIOUS_BASE_URL)
+        inv_netloc = inv.netloc or inv.path
+        if not inv_netloc:
+            return url
+        scheme = inv.scheme or "https"
+        return parsed._replace(scheme=scheme, netloc=inv_netloc).geturl()
+    except Exception:
+        return url
 
 
 def expand_short_urls(urls: list[str]) -> list[str]:
@@ -365,84 +469,52 @@ def strip_urls_from_text(text: str, known_urls: list[str] | None = None) -> str:
     return cleaned.strip()
 
 
-def load_history() -> tuple[dict[str, list[str]], set[str]]:
+def load_history(persist: bool = True) -> tuple[dict[str, list[str]], set[str], bool]:
     """
     Lädt History als Mapping pro Nutzer. Unterstützt Legacy-Format (Plaintext-Zeilen).
+    Gibt zusätzlich zurück, ob beim Bereinigen Änderungen vorgenommen wurden.
     """
     history_map: dict[str, list[str]] = {}
-    seen_ids: set[str] = set()
-    if not os.path.exists(HISTORY_FILE):
-        return history_map, seen_ids
-
-    try:
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        if not content or not content.strip():
-            return history_map, seen_ids
-
-        content_stripped = content.lstrip()
-        if content_stripped.startswith("{"):
-            try:
-                data = json.loads(content)
-            except Exception as exc:
-                logging.error(f"nitter_bot: Ungültige JSON-History: {exc}")
-                return history_map, seen_ids
-
-            if isinstance(data, dict):
-                for user, entries in data.items():
-                    if not isinstance(entries, list):
-                        continue
-                    normalized_entries = []
-                    for entry in entries:
-                        if not isinstance(entry, str):
-                            continue
-                        entry = entry.strip()
-                        if not entry:
-                            continue
-                        normalized_entries.append(entry)
-                        status_id = extract_status_id_from_url(entry)
-                        if status_id:
-                            seen_ids.add(status_id)
-                    if normalized_entries:
-                        history_map[str(user)] = normalized_entries
-        else:
-            legacy_entries = []
-            for line in content.splitlines():
-                entry = line.strip()
+    raw = state_store.load_nitter_history()
+    if raw and isinstance(raw, dict):
+        for user, entries in raw.items():
+            if not isinstance(entries, list):
+                continue
+            normalized_entries = []
+            for entry in entries:
+                if not isinstance(entry, str):
+                    continue
+                entry = entry.strip()
                 if not entry:
                     continue
-                legacy_entries.append(entry)
-                status_id = extract_status_id_from_url(entry)
-                if status_id:
-                    seen_ids.add(status_id)
-            if legacy_entries:
-                history_map["_legacy"] = legacy_entries
-    except Exception as exc:
-        logging.error(f"nitter_bot: Fehler beim Lesen der History: {exc}")
+                normalized_entries.append(entry)
+            if normalized_entries:
+                history_map[str(user)] = normalized_entries
 
-    return history_map, seen_ids
+    cleaned_map, seen_ids, changed = clean_history_map(history_map, None)
+    if changed and persist:
+        try:
+            state_store.save_nitter_history(cleaned_map)
+        except Exception as exc:
+            logging.error(f"nitter_bot: Fehler beim Speichern der bereinigten History: {exc}")
+    return cleaned_map, seen_ids, changed
 
 
-def save_history(history_map: dict[str, list[str]], per_user_limits: dict[str, int] | None = None):
+def save_history(
+    history_map: dict[str, list[str]], per_user_limits: dict[str, int] | None = None
+) -> dict[str, list[str]]:
     """
     Speichert History pro Nutzer als JSON, pro User auf Limit begrenzt.
+    Gibt die bereinigte History zurück.
     """
-    trimmed_map: dict[str, list[str]] = {}
-    for user, entries in history_map.items():
-        limit = HISTORY_LIMIT
-        if per_user_limits:
-            try:
-                limit = max(1, int(per_user_limits.get(user, HISTORY_LIMIT)))
-            except Exception:
-                limit = HISTORY_LIMIT
-        trimmed_map[user] = (entries or [])[-limit:]
+    trimmed_map, _, _ = clean_history_map(history_map, per_user_limits)
 
     try:
-        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(trimmed_map, f, ensure_ascii=False, indent=2)
+        state_store.save_nitter_history(trimmed_map)
     except Exception as exc:
         logging.error(f"nitter_bot: Fehler beim Schreiben der History: {exc}")
+
+    return trimmed_map
 
 
 def html_to_text(html_fragment: str) -> str:
@@ -457,6 +529,64 @@ def html_to_text(html_fragment: str) -> str:
     text = html.unescape(text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def split_summary_and_quotes(summary_html: str) -> tuple[str, list[str]]:
+    """
+    Trennt den Hauptteil eines RSS-Summarys von allen vorhandenen Blockquotes.
+    Gibt das HTML des Hauptteils sowie eine Liste der Blockquote-Inhalte (in Reihenfolge) zurück.
+    """
+    if not summary_html:
+        return "", []
+
+    quotes: list[str] = []
+
+    def _collect(match):
+        quotes.append(match.group(1))
+        return ""
+
+    main_html = re.sub(r"(?is)<blockquote[^>]*>(.*?)</blockquote>", _collect, summary_html).strip()
+    return main_html, quotes
+
+
+def extract_quote_info(quote_html: str, fallback_username: str):
+    if not quote_html:
+        return None
+
+    quote_username = fallback_username
+    username_match = re.search(r"@([A-Za-z0-9_]{1,30})", quote_html)
+    if username_match:
+        quote_username = username_match.group(1)
+
+    status_url_raw = ""
+    for href in re.findall(r'href="([^"]+)"', quote_html):
+        if "/status/" in href:
+            status_url_raw = add_port_if_local(href)
+            break
+
+    if status_url_raw:
+        try:
+            parsed = urlparse(status_url_raw)
+            parts = [p for p in parsed.path.split("/") if p]
+            if len(parts) >= 2 and parts[1] == "status" and parts[0]:
+                quote_username = parts[0]
+        except Exception:
+            pass
+
+    quote_status_id = extract_status_id_from_url(status_url_raw)
+    canonical_quote_url = ""
+    if quote_status_id:
+        canonical_quote_url = build_canonical_url(quote_username, quote_status_id, status_url_raw)
+
+    quote_text = html_to_text(quote_html)
+
+    return {
+        "text": quote_text,
+        "username": quote_username,
+        "status_id": quote_status_id,
+        "canonical_url": canonical_quote_url,
+        "raw_status_url": status_url_raw,
+    }
 
 
 def is_internal_url(url: str) -> bool:
@@ -563,35 +693,116 @@ def to_external_source_url(link: str, username: str, status_id: str) -> str:
     return link
 
 
-def parse_entry(entry, feed_username: str):
+def get_basic_entry(entry, feed_username: str):
     status_id_raw = str(entry.get("id") or entry.get("guid") or "").strip()
     status_id = sanitize_status_id(status_id_raw)
     if not status_id:
         status_id = extract_status_id_from_url(entry.get("link", ""))
 
     username = (entry.get("author") or "").lstrip("@").strip() or feed_username
-
-    summary_html = entry.get("summary") or entry.get("description") or ""
-    title_text = html.unescape(entry.get("title", "") or "")
-
-    content_text, images, videos, extern_urls = parse_summary(summary_html)
-    if not content_text:
-        content_text = html_to_text(title_text)
-
-    extern_urls.extend(extract_urls_from_text(title_text))
-    extern_urls = dedupe_preserve_order(extern_urls)
-    extern_urls = expand_short_urls(extern_urls)
-    extern_urls = dedupe_preserve_order([normalize_url(u) for u in extern_urls])
-    if extern_urls:
-        content_text = strip_urls_from_text(content_text, extern_urls)
-    content_text = remove_truncated_url_tokens(content_text)
-    content_text = replace_mentions_with_hash(content_text)
-
     published_ts, posted_time = parse_published(entry)
     link_raw = entry.get("link", "") or ""
     link_local_fixed = add_port_if_local(link_raw)
     canonical_url = build_canonical_url(username, status_id, "")
     source_url = to_external_source_url(link_local_fixed, username, status_id)
+
+    return {
+        "status_id": status_id,
+        "username": username,
+        "published_ts": published_ts,
+        "posted_time": posted_time,
+        "link_local_fixed": link_local_fixed,
+        "canonical_url": canonical_url,
+        "source_url": source_url,
+    }
+
+
+def parse_entry(entry, feed_username: str, basics: dict | None = None):
+    basics = basics or get_basic_entry(entry, feed_username)
+    status_id = basics.get("status_id", "")
+    username = basics.get("username") or feed_username
+    published_ts = basics.get("published_ts")
+    posted_time = basics.get("posted_time") or ""
+    link_local_fixed = basics.get("link_local_fixed") or add_port_if_local(entry.get("link", "") or "")
+    canonical_url = basics.get("canonical_url") or build_canonical_url(username, status_id, "")
+    source_url = basics.get("source_url") or to_external_source_url(link_local_fixed, username, status_id)
+
+    summary_html = entry.get("summary") or entry.get("description") or ""
+    title_text = html.unescape(entry.get("title", "") or "")
+
+    main_html, quote_htmls = split_summary_and_quotes(summary_html)
+    _, images, videos, extern_urls = parse_summary(summary_html)
+
+    content_text = html_to_text(main_html)
+    if not content_text:
+        content_text = html_to_text(title_text)
+
+    extern_urls.extend(extract_urls_from_text(title_text))
+    extern_urls = [normalize_url(u) for u in extern_urls if u]
+    extern_urls = dedupe_preserve_order(extern_urls)
+    extern_urls = expand_short_urls(extern_urls)
+    extern_urls = dedupe_preserve_order([normalize_url(u) for u in extern_urls])
+
+    quote_blocks: list[str] = []
+    quote_known_urls: list[str] = []
+    quote_urls_for_dedupe: list[str] = []
+    quote_refs: list[dict] = []
+    for quote_html in quote_htmls:
+        quote_info = extract_quote_info(quote_html, username)
+        if not quote_info:
+            continue
+
+        quote_text_clean = quote_info.get("text") or ""
+        canonical_quote_url = quote_info.get("canonical_url") or ""
+        raw_quote_url = quote_info.get("raw_status_url") or ""
+
+        if canonical_quote_url:
+            quote_known_urls.append(canonical_quote_url)
+            quote_urls_for_dedupe.append(canonical_quote_url)
+        if raw_quote_url:
+            quote_known_urls.append(raw_quote_url)
+            quote_urls_for_dedupe.append(raw_quote_url)
+
+        quote_url_display = canonical_quote_url or raw_quote_url or ""
+
+        if quote_text_clean:
+            quote_text_clean = strip_urls_from_text(quote_text_clean, quote_known_urls)
+            quote_text_clean = remove_truncated_url_tokens(quote_text_clean)
+            quote_text_clean = replace_mentions_with_hash(quote_text_clean)
+
+        quote_block = quote_url_display or quote_text_clean
+        if quote_block:
+            quote_blocks.append(f"Zitat: {quote_block}")
+            quote_refs.append(
+                {
+                    "status_id": quote_info.get("status_id") or "",
+                    "display": quote_block,
+                    "canonical_url": canonical_quote_url or "",
+                }
+            )
+
+    quote_url_norms = {normalize_url(url) for url in quote_urls_for_dedupe if url}
+    filtered_extern_urls: list[str] = []
+    for raw_url in extern_urls:
+        normalized = normalize_url(raw_url)
+        if normalized and normalized not in quote_url_norms:
+            filtered_extern_urls.append(normalized)
+    extern_urls = dedupe_preserve_order(filtered_extern_urls)
+
+    urls_for_stripping = extern_urls + quote_known_urls
+    if content_text:
+        content_text = strip_urls_from_text(content_text, urls_for_stripping)
+
+    extern_urls = dedupe_preserve_order([replace_with_invidious(u) for u in extern_urls])
+    content_text = remove_truncated_url_tokens(content_text)
+    content_text = replace_mentions_with_hash(content_text)
+
+    if quote_blocks:
+        quotes_combined = "\n".join(quote_blocks)
+        if content_text:
+            content_text = f"{content_text}\n\n{quotes_combined}"
+        else:
+            content_text = quotes_combined
 
     return {
         "status_id": status_id,
@@ -604,6 +815,7 @@ def parse_entry(entry, feed_username: str):
         "link": source_url or link_local_fixed,
         "canonical_url": canonical_url or source_url,
         "published_ts": published_ts,
+        "quote_refs": quote_refs,
     }
 
 
@@ -621,13 +833,16 @@ def collect_for_user(
     history_map: dict[str, list[str]],
     seen_ids: set[str],
     per_user_limits: dict[str, int] | None,
-):
-    new_items = []
+    now_ts: float,
+    max_age_seconds: int | None,
+) -> tuple[list[dict], bool]:
+    new_items: list[dict] = []
+    history_changed = False
     try:
         entries = fetch_feed(username)
     except Exception as exc:
         logging.error(f"nitter_bot: Fehler beim Abrufen des Feeds für {username}: {exc}")
-        return new_items
+        return new_items, history_changed
 
     feed_len = len(entries or [])
     if per_user_limits is not None:
@@ -637,22 +852,55 @@ def collect_for_user(
 
     for entry in entries:
         try:
-            parsed = parse_entry(entry, username)
+            basics = get_basic_entry(entry, username)
         except Exception as exc:
-            logging.error(f"nitter_bot: Fehler beim Parsen eines Eintrags für {username}: {exc}")
+            logging.error(f"nitter_bot: Fehler beim Auslesen der Metadaten für {username}: {exc}")
             continue
 
-        status_id = parsed.get("status_id", "")
+        status_id = basics.get("status_id", "")
         if not status_id or status_id in seen_ids:
+            continue
+
+        published_ts = basics.get("published_ts", now_ts) or now_ts
+        is_too_old = False
+        if max_age_seconds:
+            try:
+                is_too_old = (now_ts - float(published_ts)) > max_age_seconds
+            except Exception:
+                is_too_old = False
+
+        if is_too_old:
+            seen_ids.add(status_id)
+            history_entry = (
+                basics.get("canonical_url")
+                or basics.get("source_url")
+                or basics.get("link_local_fixed")
+                or ""
+            )
+            if history_entry:
+                user_history.append(history_entry)
+                history_changed = True
+            age_minutes = (now_ts - float(published_ts)) / 60
+            logging.info(
+                f"nitter_bot: Überspringe alten Eintrag {status_id} von {username} "
+                f"({age_minutes:.1f} Minuten)."
+            )
+            continue
+
+        try:
+            parsed = parse_entry(entry, username, basics)
+        except Exception as exc:
+            logging.error(f"nitter_bot: Fehler beim Parsen eines Eintrags für {username}: {exc}")
             continue
 
         seen_ids.add(status_id)
         history_entry = parsed.get("canonical_url") or parsed.get("link", "")
         if history_entry:
             user_history.append(history_entry)
+            history_changed = True
         new_items.append(parsed)
 
-    return new_items
+    return new_items, history_changed
 
 
 def build_tweet_payloads(items: list[dict]):
@@ -674,12 +922,14 @@ def build_tweet_payloads(items: list[dict]):
                 "content": item.get("content", ""),
                 "posted_time": item.get("posted_time", ""),
                 "var_href": item.get("canonical_url") or item.get("link", ""),
+                "status_id": item.get("status_id", ""),
                 "images": images,
                 "videos": videos,
                 "extern_urls": extern_urls,
                 "images_as_string": "\n".join(images),
                 "videos_as_string": "\n".join(videos),
                 "extern_urls_as_string": extern_urls_as_string,
+                "quote_refs": item.get("quote_refs") or [],
             }
         )
     return new_tweets
@@ -687,19 +937,33 @@ def build_tweet_payloads(items: list[dict]):
 
 async def main():
     parser = argparse.ArgumentParser(description="Poll lokale Nitter-RSS-Feeds.")
-    parser.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--debug",
         action="store_true",
-        help="Keine Auslieferung, sondern Ausgabe der neuen Items auf STDOUT.",
+        help="Keine Auslieferung, keine DB-Updates; Ausgabe neuer Items auf STDOUT.",
+    )
+    mode_group.add_argument(
+        "--nosending",
+        "--no-send",
+        "--dry-run",
+        dest="no_send",
+        action="store_true",
+        help="Keine Auslieferung, aber DB/History wird aktualisiert.",
     )
     args = parser.parse_args()
+    persist_history = not args.debug
+    age_limit_seconds = None if args.debug else (MAX_ITEM_AGE_SECONDS or None)
 
-    user_configs = build_user_configs()
+    user_configs = build_user_configs(persist=persist_history)
     if not user_configs:
-        logging.error("nitter_bot: Keine Benutzer in List_of_Twitter_users.txt gefunden.")
+        logging.error("nitter_bot: Keine Benutzerkonfiguration gefunden.")
         return
 
-    history_map, seen_ids = load_history()
+    history_map, seen_ids, history_needs_save = load_history(persist=persist_history)
+    if not persist_history and history_needs_save:
+        logging.info("nitter_bot: History wurde bereinigt (Debug-Modus), Änderungen nicht gespeichert.")
+        history_needs_save = False
     per_user_limits: dict[str, int] = {}
 
     for cfg in user_configs:
@@ -718,6 +982,8 @@ async def main():
             now_ts = now.timestamp()
             earliest_next = now_ts + max(POLL_INTERVAL, 30)
             new_items: list[dict] = []
+            history_changed = history_needs_save
+            history_needs_save = False
 
             for cfg in user_configs:
                 within_window, next_start_ts = _is_within_window(now, cfg.get("active_start"), cfg.get("active_end"))
@@ -731,18 +997,33 @@ async def main():
                     cfg["next_run"] = now_ts
 
                 if now_ts >= cfg["next_run"]:
-                    fetched = collect_for_user(cfg["username"], history_map, seen_ids, per_user_limits)
+                    fetched, user_history_changed = collect_for_user(
+                        cfg["username"],
+                        history_map,
+                        seen_ids,
+                        per_user_limits,
+                        now_ts,
+                        age_limit_seconds,
+                    )
                     if fetched:
                         new_items.extend(fetched)
+                    if user_history_changed:
+                        history_changed = True
                     cfg["next_run"] = now_ts + cfg["interval"]
 
                 earliest_next = min(earliest_next, cfg["next_run"])
 
+            if history_changed and persist_history:
+                history_map = save_history(history_map, per_user_limits)
+
             if new_items:
-                save_history(history_map, per_user_limits)
                 new_tweets = build_tweet_payloads(new_items)
                 if new_tweets:
                     if args.debug:
+                        for t in new_tweets:
+                            print(json.dumps(t, ensure_ascii=False, indent=2))
+                    elif args.no_send:
+                        print(f"No-send: {len(new_tweets)} neue Items (DB aktualisiert, keine Auslieferung).")
                         for t in new_tweets:
                             print(json.dumps(t, ensure_ascii=False, indent=2))
                     else:
