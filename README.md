@@ -78,7 +78,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
    `python test_alt_text.py --dummy` (offline) oder `python test_alt_text.py --image <pfad>` mit gesetztem `GEMINI_API_KEY`.
 
 ## Services (systemd)
-- Vorlagen liegen unter `services/`: `twitter_bot.service.txt`, `bsyk_bot.service.txt`, `telegram_control_bot.service.txt`, `mastodon_control_bot.service.txt`.
+- Vorlagen liegen unter `services/`: `twitter_bot.service`, `bsky_bot.service`, `telegram_control_bot.service`, `mastodon_control_bot.service`, `nitter_bot.service`.
 - Alle Einheiten referenzieren ein gemeinsames Env-File (`/etc/twitter_bot.env`) mit den nötigen Secrets, z. B.:
   ```bash
   GEMINI_API_KEY=...
@@ -104,7 +104,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   (analog für `bsky_feed_monitor.py`, `telegram_control_bot.py`, `mastodon_control_bot.py`).
 - Installation (Beispiel `twitter_bot`):
   ```bash
-  sudo cp services/twitter_bot.service.txt /etc/systemd/system/twitter_bot.service
+  sudo cp services/twitter_bot.service /etc/systemd/system/twitter_bot.service
   sudo systemctl daemon-reload
   sudo systemctl enable --now twitter_bot.service
   ```
