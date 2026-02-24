@@ -27,6 +27,8 @@ NITTER_USERS_BUCKET = "nitter_users"
 BSKY_FEED_BUCKET = "bsky_feed_history"
 LOG_LIVE_BUCKET = "logs_live"
 LOG_ARCHIVE_BUCKET = "logs_archive"
+FAILED_DELIVERIES_CHANNELS = {"telegram", "mastodon"}
+MASTODON_PAUSE_CONSUMERS = {"mastodon_bot", "mastodon_control_bot"}
 
 LIVE_LOG_RETENTION_DAYS = 7
 ARCHIVE_LOG_RETENTION_DAYS = 90
@@ -210,3 +212,266 @@ def store_archive_logs(entries: Iterable[dict]) -> list[dict]:
 def prune_logs():
     _store_logs(LOG_LIVE_BUCKET, [], LIVE_LOG_RETENTION_DAYS)
     _store_logs(LOG_ARCHIVE_BUCKET, [], ARCHIVE_LOG_RETENTION_DAYS)
+
+
+def enqueue_failed_delivery(
+    *,
+    channel: str,
+    target: str,
+    payload: Dict[str, Any],
+    max_retries: int = 3,
+    first_delay_seconds: int = 60,
+    last_error: str = "",
+) -> int | None:
+    if channel not in FAILED_DELIVERIES_CHANNELS:
+        return None
+    storage.init_db()
+    now = int(time.time())
+    next_retry_at = now + max(1, int(first_delay_seconds))
+    retries = max(1, int(max_retries))
+    payload_json = json.dumps(payload if isinstance(payload, dict) else {}, ensure_ascii=False)
+    with storage.get_connection() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO failed_deliveries (
+                channel, target, payload_json, attempt_count, max_retries,
+                next_retry_at, status, last_error, created_at, updated_at
+            ) VALUES (?, ?, ?, 0, ?, ?, 'pending', ?, ?, ?)
+            """,
+            (channel, str(target), payload_json, retries, next_retry_at, str(last_error or ""), now, now),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+
+def get_due_failed_deliveries(
+    channel: str,
+    *,
+    limit: int = 100,
+    now_ts: int | None = None,
+) -> list[dict]:
+    if channel not in FAILED_DELIVERIES_CHANNELS:
+        return []
+    storage.init_db()
+    now = int(now_ts or time.time())
+    max_rows = max(1, int(limit))
+    with storage.get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, target, payload_json, attempt_count, max_retries, next_retry_at, last_error, created_at, updated_at
+            FROM failed_deliveries
+            WHERE channel = ? AND status = 'pending' AND next_retry_at <= ?
+            ORDER BY next_retry_at ASC, id ASC
+            LIMIT ?
+            """,
+            (channel, now, max_rows),
+        ).fetchall()
+    out: list[dict] = []
+    for row in rows:
+        raw_payload = row[2] or "{}"
+        try:
+            payload = json.loads(raw_payload)
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        out.append(
+            {
+                "id": int(row[0]),
+                "channel": channel,
+                "target": row[1] or "",
+                "payload": payload,
+                "attempt_count": int(row[3] or 0),
+                "max_retries": int(row[4] or 0),
+                "next_retry_at": int(row[5] or 0),
+                "last_error": row[6] or "",
+                "created_at": int(row[7] or 0),
+                "updated_at": int(row[8] or 0),
+            }
+        )
+    return out
+
+
+def schedule_failed_delivery_retry(
+    delivery_id: int,
+    *,
+    attempt_count: int,
+    next_retry_at: int,
+    last_error: str = "",
+):
+    storage.init_db()
+    now = int(time.time())
+    with storage.get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE failed_deliveries
+            SET attempt_count = ?, next_retry_at = ?, last_error = ?, status = 'pending', updated_at = ?
+            WHERE id = ?
+            """,
+            (int(attempt_count), int(next_retry_at), str(last_error or ""), now, int(delivery_id)),
+        )
+        conn.commit()
+
+
+def mark_failed_delivery_exhausted(
+    delivery_id: int,
+    *,
+    attempt_count: int,
+    last_error: str = "",
+):
+    storage.init_db()
+    with storage.get_connection() as conn:
+        conn.execute(
+            """
+            DELETE FROM failed_deliveries
+            WHERE id = ?
+            """,
+            (int(delivery_id),),
+        )
+        conn.commit()
+
+
+def remove_failed_delivery(delivery_id: int):
+    storage.init_db()
+    with storage.get_connection() as conn:
+        conn.execute("DELETE FROM failed_deliveries WHERE id = ?", (int(delivery_id),))
+        conn.commit()
+
+
+def prune_failed_deliveries(max_age_days: int = 14):
+    storage.init_db()
+    now = int(time.time())
+    cutoff = now - max(1, int(max_age_days)) * 24 * 60 * 60
+    with storage.get_connection() as conn:
+        conn.execute(
+            """
+            DELETE FROM failed_deliveries
+            WHERE status = 'exhausted' AND updated_at < ?
+            """,
+            (cutoff,),
+        )
+        conn.commit()
+
+
+def set_mastodon_instance_pause(
+    instance_name: str,
+    *,
+    consumers: List[str] | None = None,
+    reporter: str = "",
+    pause_seconds: int = 15 * 60,
+    reason: str = "",
+) -> int:
+    requested = consumers if isinstance(consumers, list) and consumers else ["mastodon_bot", "mastodon_control_bot"]
+    normalized_consumers = [str(c).strip() for c in requested if str(c).strip() in MASTODON_PAUSE_CONSUMERS]
+    if not normalized_consumers:
+        return 0
+    storage.init_db()
+    now = int(time.time())
+    pause_until = now + max(1, int(pause_seconds))
+    with storage.get_connection() as conn:
+        for consumer in normalized_consumers:
+            conn.execute(
+                """
+                INSERT INTO mastodon_instance_pauses_v2 (instance_name, consumer, pause_until, reporter, reason, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(instance_name, consumer) DO UPDATE SET
+                    pause_until = excluded.pause_until,
+                    reporter = excluded.reporter,
+                    reason = excluded.reason,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    str(instance_name),
+                    consumer,
+                    int(pause_until),
+                    str(reporter or ""),
+                    str(reason or ""),
+                    now,
+                ),
+            )
+        conn.commit()
+    return int(pause_until)
+
+
+def clear_mastodon_instance_pause(instance_name: str, *, consumer: str | None = None):
+    storage.init_db()
+    with storage.get_connection() as conn:
+        if consumer and str(consumer).strip() in MASTODON_PAUSE_CONSUMERS:
+            conn.execute(
+                "DELETE FROM mastodon_instance_pauses_v2 WHERE instance_name = ? AND consumer = ?",
+                (str(instance_name), str(consumer).strip()),
+            )
+        else:
+            conn.execute("DELETE FROM mastodon_instance_pauses_v2 WHERE instance_name = ?", (str(instance_name),))
+        conn.commit()
+
+
+def _cleanup_expired_mastodon_instance_pauses(now_ts: int | None = None):
+    storage.init_db()
+    now = int(now_ts or time.time())
+    with storage.get_connection() as conn:
+        conn.execute("DELETE FROM mastodon_instance_pauses_v2 WHERE pause_until <= ?", (now,))
+        conn.commit()
+
+
+def get_mastodon_instance_pause_until(
+    instance_name: str,
+    *,
+    consumer: str,
+    now_ts: int | None = None,
+) -> int:
+    normalized_consumer = str(consumer).strip()
+    if normalized_consumer not in MASTODON_PAUSE_CONSUMERS:
+        return 0
+    storage.init_db()
+    now = int(now_ts or time.time())
+    _cleanup_expired_mastodon_instance_pauses(now)
+    with storage.get_connection() as conn:
+        row = conn.execute(
+            "SELECT pause_until FROM mastodon_instance_pauses_v2 WHERE instance_name = ? AND consumer = ?",
+            (str(instance_name), normalized_consumer),
+        ).fetchone()
+    if not row:
+        return 0
+    pause_until = int(row[0] or 0)
+    if pause_until <= now:
+        clear_mastodon_instance_pause(instance_name, consumer=normalized_consumer)
+        return 0
+    return pause_until
+
+
+def get_active_mastodon_instance_pauses(
+    *,
+    consumer: str | None = None,
+    now_ts: int | None = None,
+) -> Dict[str, int]:
+    storage.init_db()
+    now = int(now_ts or time.time())
+    _cleanup_expired_mastodon_instance_pauses(now)
+    normalized_consumer = str(consumer).strip() if consumer else ""
+    with storage.get_connection() as conn:
+        if normalized_consumer in MASTODON_PAUSE_CONSUMERS:
+            rows = conn.execute(
+                """
+                SELECT instance_name, pause_until
+                FROM mastodon_instance_pauses_v2
+                WHERE consumer = ? AND pause_until > ?
+                """,
+                (normalized_consumer, now),
+            ).fetchall()
+            return {str(instance): int(until) for instance, until in rows if instance}
+
+        rows = conn.execute(
+            """
+            SELECT instance_name, MAX(pause_until) as pause_until
+            FROM mastodon_instance_pauses_v2
+            WHERE pause_until > ?
+            GROUP BY instance_name
+            """,
+            (now,),
+        ).fetchall()
+    return {str(instance): int(until) for instance, until in rows if instance}
+
+
+def prune_mastodon_instance_pauses():
+    _cleanup_expired_mastodon_instance_pauses()

@@ -140,7 +140,43 @@ def init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS failed_deliveries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel TEXT NOT NULL,
+                target TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 3,
+                next_retry_at INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                last_error TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mastodon_instance_pauses_v2 (
+                instance_name TEXT NOT NULL,
+                consumer TEXT NOT NULL,
+                pause_until INTEGER NOT NULL,
+                reporter TEXT,
+                reason TEXT,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (instance_name, consumer)
+            )
+            """
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_masto_created ON mastodon_posts(created_at)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_failed_deliveries_due ON failed_deliveries(channel, status, next_retry_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_mastodon_instance_pauses_v2_until ON mastodon_instance_pauses_v2(pause_until)"
+        )
         conn.commit()
     _initialized = True
 
