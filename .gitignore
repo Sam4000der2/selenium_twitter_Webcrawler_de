@@ -7,3 +7,4 @@ venv/
 venc/
 .env
 .DS_Store
+tests/
