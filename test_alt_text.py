@@ -71,7 +71,7 @@ async def run_test(image_path: Path | None, use_dummy: bool):
         original_manager = mastodon_bot.gemini_manager
         mastodon_bot.gemini_manager = manager
     else:
-        client = mastodon_bot.client
+        client = None
         manager = mastodon_bot.gemini_manager
         original_manager = None
 
@@ -104,8 +104,10 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    if not args.dummy and not os.environ.get("GEMINI_API_KEY"):
-        raise SystemExit("GEMINI_API_KEY fehlt. Setze die Variable oder nutze --dummy.")
+    gemini_key_envs = ["GEMINI_API_KEY", "GEMINI_API_KEY1", "GEMINI_API_KEY2", "GEMINI_API_KEY3", "GEMINI_API_KEY4"]
+    has_any_gemini_key = any((os.environ.get(name) or "").strip() for name in gemini_key_envs)
+    if not args.dummy and not has_any_gemini_key:
+        raise SystemExit("GEMINI_API_KEY fehlt. Setze GEMINI_API_KEY (oder GEMINI_API_KEY1..4) oder nutze --dummy.")
 
     img_path = Path(args.image).resolve() if args.image else None
     asyncio.run(run_test(img_path, args.dummy))

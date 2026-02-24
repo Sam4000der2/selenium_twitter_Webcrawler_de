@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 import logging
+from threading import Lock
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 from typing import Any
@@ -22,8 +23,63 @@ from mastodon_text_utils import split_mastodon_text, sanitize_for_mastodon
 import mastodon_post_store
 import state_store
 
-# Initialize the Google Gemini client with the API key
-client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+GEMINI_KEY_ENV_VARS = [
+    "GEMINI_API_KEY",
+    "GEMINI_API_KEY1",
+    "GEMINI_API_KEY2",
+    "GEMINI_API_KEY3",
+    "GEMINI_API_KEY4",
+]
+_gemini_clients: list[tuple[str, Any]] = []
+_gemini_client_index = 0
+_gemini_client_lock = Lock()
+
+
+def _build_gemini_clients() -> list[tuple[str, Any]]:
+    seen_keys: set[str] = set()
+    clients: list[tuple[str, Any]] = []
+    for env_name in GEMINI_KEY_ENV_VARS:
+        api_key = (os.environ.get(env_name) or "").strip()
+        if not api_key or api_key in seen_keys:
+            continue
+        seen_keys.add(api_key)
+        clients.append((env_name, genai.Client(api_key=api_key)))
+
+    if clients:
+        return clients
+
+    # Fallback auf das bisherige Verhalten.
+    return [("GEMINI_API_KEY", genai.Client(api_key=os.environ.get("GEMINI_API_KEY")))]
+
+
+def _ensure_gemini_clients():
+    global _gemini_clients
+    if _gemini_clients:
+        return
+    _gemini_clients = _build_gemini_clients()
+
+
+def get_next_gemini_client() -> tuple[Any, str]:
+    global _gemini_client_index
+    with _gemini_client_lock:
+        _ensure_gemini_clients()
+        env_name, current_client = _gemini_clients[_gemini_client_index]
+        _gemini_client_index = (_gemini_client_index + 1) % len(_gemini_clients)
+        return current_client, env_name
+
+
+def get_primary_gemini_client() -> Any:
+    _ensure_gemini_clients()
+    return _gemini_clients[0][1]
+
+
+def get_gemini_client_pool_size() -> int:
+    _ensure_gemini_clients()
+    return max(1, len(_gemini_clients))
+
+
+# Initialize the Google Gemini client with the available API keys
+client = get_primary_gemini_client()
 gemini_manager = GeminiModelManager(client)
 
 # Configure logging
@@ -53,6 +109,16 @@ if helper_logger.handlers:
         h.setLevel(logging.WARNING)
 helper_logger.setLevel(logging.WARNING)
 helper_logger.propagate = True
+
+# Eigener Alt-Text-Logger mit INFO-Level, ohne globale Log-Flut.
+alt_text_logger = logging.getLogger("mastodon_alt_text")
+if not alt_text_logger.handlers:
+    _alt_handler = logging.FileHandler(LOG_PATH)
+    _alt_handler.setLevel(logging.INFO)
+    _alt_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s:%(message)s'))
+    alt_text_logger.addHandler(_alt_handler)
+alt_text_logger.setLevel(logging.INFO)
+alt_text_logger.propagate = False
 print("Logging configured")
 
 # Pfad für Tagging-Regeln (wird vom Control-Bot gepflegt)
@@ -61,18 +127,15 @@ TAG_DM_MAX = 440
 
 
 def log_alt_info(msg: str):
-    logging.info(f"{ALT_TEXT_LOG_PREFIX}: {msg}")
+    alt_text_logger.info(f"{ALT_TEXT_LOG_PREFIX}: {msg}")
 
 
 def log_alt_warning(msg: str):
-    if "RESOURCE_EXHAUSTED" in msg:
-        log_alt_info(msg)
-    else:
-        logging.warning(f"{ALT_TEXT_LOG_PREFIX}: {msg}")
+    alt_text_logger.warning(f"{ALT_TEXT_LOG_PREFIX}: {msg}")
 
 
 def log_alt_error(msg: str):
-    logging.error(f"{ALT_TEXT_LOG_PREFIX}: {msg}")
+    alt_text_logger.error(f"{ALT_TEXT_LOG_PREFIX}: {msg}")
 
 # Instances: Tokens kommen direkt aus ENV:
 #   opnv_berlin, opnv_toot, opnv_mastodon
@@ -105,6 +168,32 @@ print("Instances configured")
 MASTODON_MAX_CHARS = 500
 MASTODON_MIN_CONTENT_LEN = int(os.environ.get("MASTODON_MIN_CONTENT_LEN", "8"))
 MASTODON_FIRST_POST_MIN_CONTENT_LEN = int(os.environ.get("MASTODON_FIRST_POST_MIN_CONTENT_LEN", "80"))
+SEND_RETRY_DELAYS_SECONDS = [60, 120, 180]
+SEND_MAX_EXTRA_RETRIES = len(SEND_RETRY_DELAYS_SECONDS)
+INSTANCE_PAUSE_SECONDS = 15 * 60
+
+
+def _is_max_retries_exceeded_error(error_text: str) -> bool:
+    msg = (error_text or "").lower()
+    return "max retries exceeded with url" in msg
+
+
+def _pause_instance_if_needed(instance_name: str, error_text: str, *, source: str) -> bool:
+    if not _is_max_retries_exceeded_error(error_text):
+        return False
+    pause_until = state_store.set_mastodon_instance_pause(
+        instance_name,
+        consumers=["mastodon_bot", "mastodon_control_bot"],
+        reporter="mastodon_bot",
+        pause_seconds=INSTANCE_PAUSE_SECONDS,
+        reason=f"{source}: {error_text}",
+    )
+    pause_until_dt = datetime.fromtimestamp(pause_until, BERLIN_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
+    logging.warning(
+        f"mastodon_bot: Instanz {instance_name} pausiert bis {pause_until_dt} wegen Netzwerkfehler "
+        f"(max retries exceeded). Quelle={source}"
+    )
+    return True
 
 
 def _extract_status_id_from_url(url: str) -> str:
@@ -247,6 +336,8 @@ async def _fetch_instance_version(mastodon, instance_name: str | None = None) ->
     try:
         info = await asyncio.to_thread(mastodon.instance)
     except Exception as e:
+        if instance_name:
+            _pause_instance_if_needed(instance_name, str(e), source="fetch_instance_version")
         logging.error(f"mastodon_bot: Fehler beim Abrufen der Instanzversion: {e}")
         return None
 
@@ -782,6 +873,7 @@ async def post_tweet(
                 f"mastodon_bot: Quote-API fehlt auf {instance_name}, poste ohne offizielle Quote (text-only)."
             )
             return None
+        _pause_instance_if_needed(instance_name, str(e), source="post_tweet")
         logging.error(f"mastodon_bot: Fehler beim Posten auf {instance_name}: {e}")
         return None
 
@@ -853,51 +945,146 @@ async def generate_alt_text(
         system_instruction=alt_text
     )
 
-    def _is_quota_error(msg: str) -> bool:
+    def _is_retryable_api_error(msg: str) -> bool:
         m = msg.lower()
-        return "resource_exhausted" in m or "quota" in m or "exceeded your current quota" in m or "429" in m
+        return (
+            "resource_exhausted" in m
+            or "quota" in m
+            or "exceeded your current quota" in m
+            or "429" in m
+            or "503" in m
+            or "unavailable" in m
+        )
+
+    def _is_definitive_api_error(msg: str) -> bool:
+        m = msg.lower()
+        return (
+            "googleapierror" in m
+            or "grpc" in m
+            or "status_code" in m
+            or "http" in m
+            or "invalid" in m
+            or "permission" in m
+            or "unauthorized" in m
+            or "forbidden" in m
+            or "not found" in m
+            or "400" in m
+            or "401" in m
+            or "403" in m
+            or "404" in m
+        )
+
+    if client is None:
+        discovery_client, _ = get_next_gemini_client()
+        gemini_manager.client = discovery_client
+
+    failed_models: list[str] = []
 
     for model_name in gemini_manager.get_candidate_models():
-        try:
-            with Image.open(io.BytesIO(image_bytes)) as img:
-                response = client.models.generate_content(
-                    model=model_name,
-                    config=cfg,
-                    contents=[
-                        context_text,  # Kontext als User-Content
-                        img
-                    ]
-                )
-            text = (response.text or "").strip()
-            if not text:
-                msg = "Leere Antwort vom Modell"
-                log_alt_warning(f"Modell '{model_name}' schlug fehl: {msg}")
-                helper_logger.warning(f"{GEMINI_HELPER_PREFIX}: Modell '{model_name}' schlug fehl: {msg}")
-                gemini_manager.mark_failed(model_name, msg)
-                continue
+        pool_attempts = get_gemini_client_pool_size()
+        use_custom_client = client is not None
+        max_attempts = pool_attempts + (1 if use_custom_client else 0)
+        retryable_errors: list[str] = []
+        not_found_errors: list[str] = []
+        non_retryable_errors: list[str] = []
 
-            gemini_manager.mark_success(model_name)
-            return text[:1500]
-        except Exception as e:
-            err_txt = str(e)
-            if "not found" in err_txt.lower() or "404" in err_txt:
-                helper_logger.warning(f"{GEMINI_HELPER_PREFIX}: Modell '{model_name}' schlug fehl: {err_txt}")
-                log_alt_warning(f"Modell '{model_name}' schlug fehl: {err_txt}")
-                gemini_manager.mark_not_found(model_name, err_txt)
-                continue
+        for attempt in range(max_attempts):
+            if use_custom_client and attempt == 0:
+                active_client = client
+                key_source = "custom_client"
+            else:
+                active_client, key_source = get_next_gemini_client()
+            gemini_manager.client = active_client
 
-            if _is_quota_error(err_txt):
-                log_alt_warning(f"Modell '{model_name}' schlug fehl: {err_txt}")
-                helper_logger.warning(f"{GEMINI_HELPER_PREFIX}: Modell '{model_name}' schlug fehl: {err_txt}")
-                gemini_manager.mark_quota(model_name, err_txt)
-                continue
+            try:
+                with Image.open(io.BytesIO(image_bytes)) as img:
+                    response = active_client.models.generate_content(
+                        model=model_name,
+                        config=cfg,
+                        contents=[
+                            context_text,  # Kontext als User-Content
+                            img
+                        ]
+                    )
+                text = (response.text or "").strip()
+                if not text:
+                    msg = "Leere Antwort vom Modell"
+                    non_retryable_errors.append(msg)
+                    log_alt_info(f"Modell '{model_name}' über {key_source}: {msg}")
+                    if attempt + 1 < max_attempts:
+                        log_alt_info(f"Modell '{model_name}': leere Antwort, nächster Key wird versucht.")
+                        continue
+                    break
 
-            log_alt_error(f"Modell '{model_name}' schlug fehl: {err_txt}")
-            helper_logger.warning(f"{GEMINI_HELPER_PREFIX}: Modell '{model_name}' schlug fehl: {err_txt}")
-            gemini_manager.mark_failed(model_name, err_txt)
+                gemini_manager.mark_success(model_name)
+                return text[:1500]
+            except Exception as e:
+                err_txt = str(e)
+                if "not found" in err_txt.lower() or "404" in err_txt:
+                    not_found_errors.append(err_txt)
+                    if attempt + 1 < max_attempts:
+                        log_alt_info(f"Modell '{model_name}' über {key_source}: 404/NOT_FOUND, nächster Key wird versucht.")
+                        continue
+                    break
+
+                if _is_retryable_api_error(err_txt):
+                    retryable_errors.append(err_txt)
+                    log_alt_info(f"Modell '{model_name}' über {key_source} schlug fehl: {err_txt}")
+                    if attempt + 1 < max_attempts:
+                        log_alt_info(
+                            f"Modell '{model_name}': Retry mit nächstem Gemini-Key ({attempt + 1}/{max_attempts - 1} Wechsel)."
+                        )
+                        continue
+                    break
+
+                non_retryable_errors.append(err_txt)
+                if attempt + 1 < max_attempts:
+                    log_alt_info(f"Modell '{model_name}' über {key_source}: unerwarteter Fehler, nächster Key wird versucht.")
+                    continue
+                break
+
+        if retryable_errors and len(retryable_errors) >= max_attempts:
+            reason = retryable_errors[-1]
+            log_alt_info(
+                f"Modell '{model_name}' scheiterte nach Rotation über alle verfügbaren Gemini-Keys: {retryable_errors[-1]}"
+            )
+            gemini_manager.mark_quota(model_name, reason)
+            failed_models.append(f"{model_name} (quota/unavailable): {reason}")
             continue
 
-    log_alt_error("Konnte kein Alt-Text generieren – alle Modelle schlugen fehl.")
+        if not_found_errors and len(not_found_errors) >= max_attempts:
+            reason = not_found_errors[-1]
+            log_alt_warning(f"Modell '{model_name}' meldet API-Fehler NOT_FOUND: {reason}")
+            gemini_manager.mark_not_found(model_name, reason)
+            failed_models.append(f"{model_name} (not_found): {reason}")
+            continue
+
+        if retryable_errors or not_found_errors:
+            reason = (retryable_errors + not_found_errors)[-1]
+            if _is_definitive_api_error(reason):
+                log_alt_warning(f"Modell '{model_name}' meldet gemischte API-Fehler über mehrere Keys: {reason}")
+            else:
+                log_alt_info(f"Modell '{model_name}' meldet gemischte API-Fehler über mehrere Keys: {reason}")
+            gemini_manager.mark_failed(model_name, reason)
+            failed_models.append(f"{model_name} (mixed_api_errors): {reason}")
+            continue
+
+        if non_retryable_errors:
+            reason = non_retryable_errors[-1]
+            if _is_definitive_api_error(reason):
+                log_alt_warning(f"Modell '{model_name}' meldet API-Fehler: {reason}")
+            else:
+                log_alt_info(f"Modell '{model_name}' scheiterte mit nicht-API-Fehler: {reason}")
+            gemini_manager.mark_failed(model_name, reason)
+            failed_models.append(f"{model_name} (failed): {reason}")
+            continue
+
+    if failed_models:
+        log_alt_error(
+            f"Konnte kein Alt-Text generieren – alle Modelle schlugen fehl. Letzter Fehler: {failed_models[-1]}"
+        )
+    else:
+        log_alt_error("Konnte kein Alt-Text generieren – alle Modelle schlugen fehl.")
     return ""
 
 
@@ -972,7 +1159,7 @@ async def prepare_media_payloads(images, original_tweet_full: str, twitter_accou
 
                 try:
                     image_description = await generate_alt_text(
-                        client=client,
+                        client=None,
                         image_bytes=processed_bytes,
                         original_tweet_full=original_tweet_full,
                         twitter_account=twitter_account,
@@ -1028,7 +1215,7 @@ async def prepare_video_payload(video_url: str, tweet_text: str, twitter_account
         return None
 
 
-async def upload_media_payloads(mastodon, media_payloads):
+async def upload_media_payloads(mastodon, media_payloads, instance_name: str | None = None):
     media_ids = []
     if not media_payloads:
         return media_ids
@@ -1045,6 +1232,8 @@ async def upload_media_payloads(mastodon, media_payloads):
             )
             media_ids.append(media_info['id'])
         except Exception as e:
+            if instance_name:
+                _pause_instance_if_needed(instance_name, str(e), source="upload_media_payloads.media_post")
             logging.error(f"mastodon_bot: Fehler beim Media-Post: {e}")
     if not media_ids:
         logging.error("mastodon_bot: Keine Medien konnten hochgeladen werden (0/{}).".format(len(media_payloads)))
@@ -1069,9 +1258,11 @@ async def post_tweet_with_media(
     try:
         media_ids = await upload_media_payloads(
             mastodon=mastodon,
-            media_payloads=media_payloads
+            media_payloads=media_payloads,
+            instance_name=instance_name,
         )
     except Exception as e:
+        _pause_instance_if_needed(instance_name, str(e), source="post_tweet_with_media.upload_media_payloads")
         logging.error(f"mastodon_bot: Fehler beim Hochladen der Medien: {e}")
         return
     if media_payloads and not media_ids:
@@ -1115,6 +1306,7 @@ async def post_tweet_with_media(
                 f"mastodon_bot: Quote-API fehlt auf {instance_name}, poste ohne offizielle Quote (media)."
             )
             return None
+        _pause_instance_if_needed(instance_name, str(e), source="post_tweet_with_media.status_post")
         logging.error(f"mastodon_bot: Allgemeiner Fehler beim Posten mit Bildern: {e}")
         return None
 
@@ -1142,9 +1334,11 @@ async def post_tweet_with_images_legacy(
     try:
         media_ids = await upload_media_payloads(
             mastodon=mastodon,
-            media_payloads=media_payloads
+            media_payloads=media_payloads,
+            instance_name=instance_name,
         )
     except Exception as e:
+        _pause_instance_if_needed(instance_name, str(e), source="post_tweet_with_images_legacy.upload_media_payloads")
         logging.error(f"mastodon_bot: Fallback-Fehler beim Hochladen der Bilder: {e}")
         return
     if media_payloads and not media_ids:
@@ -1187,6 +1381,7 @@ async def post_tweet_with_images_legacy(
                 f"mastodon_bot: Quote-API fehlt auf {instance_name}, poste ohne offizielle Quote (legacy media)."
             )
             return None
+        _pause_instance_if_needed(instance_name, str(e), source="post_tweet_with_images_legacy.status_post")
         logging.error(f"mastodon_bot: Fallback-Fehler beim Posten mit Bildern: {e}")
         return None
 
@@ -1258,6 +1453,220 @@ async def _post_with_media_fallbacks(
     return status_obj, image_payloads
 
 
+def _build_mastodon_retry_payload(
+    *,
+    instance_name: str,
+    username: str,
+    message: str,
+    in_reply_to_id: str | None,
+    quoted_status_id: str | None,
+    with_media: bool,
+    use_video: bool,
+    images: list,
+    videos: list,
+    original_tweet_full: str,
+    tweet_url: str,
+    idx: int,
+    status_id_raw: str,
+) -> dict:
+    return {
+        "instance_name": instance_name,
+        "username": username,
+        "message": message,
+        "in_reply_to_id": in_reply_to_id,
+        "quoted_status_id": quoted_status_id,
+        "with_media": bool(with_media),
+        "use_video": bool(use_video),
+        "images": list(images or []),
+        "videos": list(videos or []),
+        "original_tweet_full": original_tweet_full or "",
+        "tweet_url": tweet_url or "",
+        "idx": int(idx),
+        "status_id_raw": status_id_raw or "",
+    }
+
+
+def _enqueue_mastodon_retry(payload: dict, error_text: str):
+    instance_name = str(payload.get("instance_name") or "")
+    state_store.enqueue_failed_delivery(
+        channel="mastodon",
+        target=instance_name,
+        payload=payload,
+        max_retries=SEND_MAX_EXTRA_RETRIES,
+        first_delay_seconds=SEND_RETRY_DELAYS_SECONDS[0],
+        last_error=error_text,
+    )
+    logging.warning(
+        f"mastodon_bot: Retry eingeplant für Instanz {instance_name} "
+        f"(delays={SEND_RETRY_DELAYS_SECONDS}, reason={error_text})"
+    )
+
+
+async def _process_pending_mastodon_retries(clients: list[tuple[str, Any]]):
+    pending = state_store.get_due_failed_deliveries("mastodon", limit=200)
+    if not pending:
+        return
+
+    client_map = {instance_name: mastodon for instance_name, mastodon in clients}
+
+    for entry in pending:
+        delivery_id = int(entry.get("id", 0))
+        payload = entry.get("payload", {}) if isinstance(entry.get("payload"), dict) else {}
+        instance_name = str(payload.get("instance_name") or entry.get("target") or "")
+        mastodon = client_map.get(instance_name)
+        now_ts = int(time_module.time())
+        pause_until = state_store.get_mastodon_instance_pause_until(
+            instance_name,
+            consumer="mastodon_bot",
+            now_ts=now_ts,
+        )
+
+        def _schedule_next_failure(error_text: str):
+            if _pause_instance_if_needed(instance_name, error_text, source="pending_retry"):
+                pause_until_local = state_store.get_mastodon_instance_pause_until(
+                    instance_name,
+                    consumer="mastodon_bot",
+                    now_ts=int(time_module.time()),
+                )
+                if pause_until_local > 0:
+                    state_store.schedule_failed_delivery_retry(
+                        delivery_id,
+                        attempt_count=int(entry.get("attempt_count", 0)),
+                        next_retry_at=pause_until_local,
+                        last_error=error_text,
+                    )
+                    return
+
+            prev_attempt_count = int(entry.get("attempt_count", 0))
+            max_retries = max(1, int(entry.get("max_retries", SEND_MAX_EXTRA_RETRIES)))
+            new_attempt_count = prev_attempt_count + 1
+            if new_attempt_count >= max_retries:
+                state_store.mark_failed_delivery_exhausted(
+                    delivery_id,
+                    attempt_count=new_attempt_count,
+                    last_error=error_text,
+                )
+                logging.error(
+                    f"mastodon_bot: Retry-Job {delivery_id} ausgeschöpft "
+                    f"(instanz={instance_name}, versuche={new_attempt_count}/{max_retries}): {error_text}"
+                )
+                return
+
+            delay_index = min(new_attempt_count, len(SEND_RETRY_DELAYS_SECONDS) - 1)
+            next_retry_at = int(time_module.time()) + SEND_RETRY_DELAYS_SECONDS[delay_index]
+            state_store.schedule_failed_delivery_retry(
+                delivery_id,
+                attempt_count=new_attempt_count,
+                next_retry_at=next_retry_at,
+                last_error=error_text,
+            )
+            logging.warning(
+                f"mastodon_bot: Retry-Job {delivery_id} erneut geplant "
+                f"(instanz={instance_name}, versuche={new_attempt_count}/{max_retries}, "
+                f"next_in={SEND_RETRY_DELAYS_SECONDS[delay_index]}s): {error_text}"
+            )
+
+        if pause_until > now_ts:
+            state_store.schedule_failed_delivery_retry(
+                delivery_id,
+                attempt_count=int(entry.get("attempt_count", 0)),
+                next_retry_at=pause_until,
+                last_error=f"Instanz pausiert bis {pause_until}",
+            )
+            continue
+
+        if not mastodon:
+            _schedule_next_failure(f"Keine Mastodon-Instanz verfügbar für retry: {instance_name}")
+            continue
+
+        username = str(payload.get("username") or "")
+        message = str(payload.get("message") or "")
+        in_reply_to_id = payload.get("in_reply_to_id")
+        quoted_status_id = payload.get("quoted_status_id")
+        with_media = bool(payload.get("with_media"))
+        use_video = bool(payload.get("use_video"))
+        images = payload.get("images") if isinstance(payload.get("images"), list) else []
+        videos = payload.get("videos") if isinstance(payload.get("videos"), list) else []
+        original_tweet_full = str(payload.get("original_tweet_full") or "")
+        tweet_url = str(payload.get("tweet_url") or "")
+        idx = int(payload.get("idx", 0) or 0)
+        status_id_raw = str(payload.get("status_id_raw") or "")
+
+        attach_media = []
+        image_payloads = None
+        try:
+            if with_media:
+                if use_video and videos:
+                    video_payload = await prepare_video_payload(
+                        video_url=str(videos[0]),
+                        tweet_text=original_tweet_full,
+                        twitter_account=username,
+                        tweet_url=tweet_url,
+                    )
+                    if video_payload:
+                        attach_media = [video_payload]
+                if not attach_media and images:
+                    image_payloads = await prepare_media_payloads(
+                        images=images,
+                        original_tweet_full=original_tweet_full,
+                        twitter_account=username,
+                        tweet_url=tweet_url,
+                    )
+                    attach_media = image_payloads or []
+        except Exception as exc:
+            _schedule_next_failure(f"Fehler beim Wiederaufbereiten von Medien: {exc}")
+            continue
+
+        if with_media and not attach_media:
+            _schedule_next_failure("Retry-Posting erwartet Medien, konnte aber keine Medien aufbereiten.")
+            continue
+
+        try:
+            status_obj, _ = await _post_with_media_fallbacks(
+                mastodon=mastodon,
+                message=message,
+                attach_media=attach_media,
+                instance_name=instance_name,
+                username=username,
+                in_reply_to_id=in_reply_to_id,
+                quoted_status_id=quoted_status_id if isinstance(quoted_status_id, str) else None,
+                use_video=use_video,
+                images=images,
+                image_payloads=image_payloads,
+                original_tweet_full=original_tweet_full,
+                tweet_url=tweet_url,
+            )
+        except Exception as exc:
+            _schedule_next_failure(f"Retry-Posting-Ausnahme: {exc}")
+            continue
+
+        if not status_obj:
+            _schedule_next_failure("Retry-Posting lieferte kein Status-Objekt.")
+            continue
+
+        state_store.remove_failed_delivery(delivery_id)
+        logging.info(f"mastodon_bot: Retry-Job {delivery_id} erfolgreich (instanz={instance_name}).")
+
+        if idx == 0 and status_id_raw:
+            try:
+                status_url = status_obj.get("url") if hasattr(status_obj, "get") else getattr(status_obj, "url", "")
+            except Exception:
+                status_url = ""
+            try:
+                created_at_field = status_obj.get("created_at") if hasattr(status_obj, "get") else getattr(status_obj, "created_at", None)
+            except Exception:
+                created_at_field = None
+            created_at_ts = int(created_at_field.timestamp()) if isinstance(created_at_field, datetime) else None
+            if status_url:
+                mastodon_post_store.store_post(
+                    instance=instance_name,
+                    status_id=status_id_raw,
+                    url=status_url,
+                    created_at_ts=created_at_ts,
+                )
+        asyncio.create_task(notify_control_bot(instance_name, status_obj, original_tweet_full))
+
+
 async def main(new_tweets, thread: bool = False):
     print("Entering main function")
 
@@ -1286,8 +1695,19 @@ async def main(new_tweets, thread: bool = False):
         logging.error("mastodon_bot: Keine Mastodon-Instanz verfügbar.")
         return
 
+    state_store.prune_mastodon_instance_pauses()
+    state_store.prune_failed_deliveries()
+    await _process_pending_mastodon_retries(clients)
+
     instance_versions: dict[str, str] = {}
     for instance_name, mastodon in clients:
+        if state_store.get_mastodon_instance_pause_until(
+            instance_name,
+            consumer="mastodon_bot",
+            now_ts=int(time_module.time()),
+        ) > 0:
+            logging.info(f"mastodon_bot: Überspringe Versionsabfrage für pausierte Instanz {instance_name}.")
+            continue
         version, _ = await _ensure_instance_version(
             instance_name,
             mastodon,
@@ -1418,6 +1838,45 @@ async def main(new_tweets, thread: bool = False):
                         logging.warning(
                             f"mastodon_bot: Quote nicht im Store gefunden (instanz={instance_name}, status={status_id_raw}), sende ohne Quote."
                         )
+
+                pause_until = state_store.get_mastodon_instance_pause_until(
+                    instance_name,
+                    consumer="mastodon_bot",
+                    now_ts=int(time_module.time()),
+                )
+                if pause_until > 0:
+                    pause_until_dt = datetime.fromtimestamp(pause_until, BERLIN_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
+                    logging.warning(
+                        f"mastodon_bot: Instanz {instance_name} ist pausiert bis {pause_until_dt}; "
+                        "poste nicht direkt und lege Beiträge in die Warteschlange."
+                    )
+                    base_reply_to_id = reply_context.get(instance_name) if reply_context is not None else None
+                    for idx, queued_message in enumerate(instance_messages):
+                        queued_attach_media = media_payloads if idx == 0 else []
+                        queued_quote_id = quoted_status_id_for_instance if supports_quote and idx == 0 else None
+                        queued_payload = _build_mastodon_retry_payload(
+                            instance_name=instance_name,
+                            username=username,
+                            message=queued_message,
+                            in_reply_to_id=base_reply_to_id,
+                            quoted_status_id=queued_quote_id,
+                            with_media=bool(queued_attach_media),
+                            use_video=bool(use_video and idx == 0),
+                            images=images if idx == 0 else [],
+                            videos=videos if idx == 0 else [],
+                            original_tweet_full=content_raw,
+                            tweet_url=var_href,
+                            idx=idx,
+                            status_id_raw=status_id_raw,
+                        )
+                        _enqueue_mastodon_retry(
+                            queued_payload,
+                            error_text=(
+                                f"Instanz pausiert bis {pause_until_dt}; "
+                                f"Posting zurückgestellt (instanz={instance_name}, user={username}, idx={idx}, url={var_href})"
+                            ),
+                        )
+                    continue
                 reply_to_id = reply_context.get(instance_name) if reply_context is not None else None
                 last_status_id = None
                 quote_link_messages = None
@@ -1484,6 +1943,58 @@ async def main(new_tweets, thread: bool = False):
                             )
 
                     if not status_obj:
+                        retry_payload = _build_mastodon_retry_payload(
+                            instance_name=instance_name,
+                            username=username,
+                            message=message,
+                            in_reply_to_id=reply_to_id,
+                            quoted_status_id=quote_for_post,
+                            with_media=bool(attach_media),
+                            use_video=bool(use_video and idx == 0),
+                            images=images if idx == 0 else [],
+                            videos=videos if idx == 0 else [],
+                            original_tweet_full=content_raw,
+                            tweet_url=var_href,
+                            idx=idx,
+                            status_id_raw=status_id_raw,
+                        )
+                        _enqueue_mastodon_retry(
+                            retry_payload,
+                            error_text=(
+                                f"Posting fehlgeschlagen (instanz={instance_name}, user={username}, "
+                                f"idx={idx}, url={var_href})"
+                            ),
+                        )
+                        pause_until_after_failure = state_store.get_mastodon_instance_pause_until(
+                            instance_name,
+                            consumer="mastodon_bot",
+                            now_ts=int(time_module.time()),
+                        )
+                        if pause_until_after_failure > 0:
+                            for queued_idx in range(idx + 1, len(instance_messages)):
+                                tail_message = instance_messages[queued_idx]
+                                tail_payload = _build_mastodon_retry_payload(
+                                    instance_name=instance_name,
+                                    username=username,
+                                    message=tail_message,
+                                    in_reply_to_id=reply_to_id,
+                                    quoted_status_id=None,
+                                    with_media=False,
+                                    use_video=False,
+                                    images=[],
+                                    videos=[],
+                                    original_tweet_full=content_raw,
+                                    tweet_url=var_href,
+                                    idx=queued_idx,
+                                    status_id_raw=status_id_raw,
+                                )
+                                _enqueue_mastodon_retry(
+                                    tail_payload,
+                                    error_text=(
+                                        f"Instanz pausiert nach Fehler; Restbeitrag zurückgestellt "
+                                        f"(instanz={instance_name}, user={username}, idx={queued_idx}, url={var_href})"
+                                    ),
+                                )
                         logging.error(
                             f"mastodon_bot: Posting fehlgeschlagen (instanz={instance_name}, user={username}, idx={idx}, url={var_href})"
                         )

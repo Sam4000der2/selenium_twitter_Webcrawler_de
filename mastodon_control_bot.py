@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import subprocess
+import time as time_module
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -66,6 +67,7 @@ EVENT_ENABLED = os.environ.get("MASTODON_CONTROL_EVENT_ENABLED", "1").lower() no
 
 # Instanz-Registry für Events (wird in _run_instance befüllt)
 INSTANCE_CLIENTS: dict[str, Mastodon] = {}
+INSTANCE_PAUSE_SECONDS = 15 * 60
 
 # Account-Gruppen (für Regel-Target-Auswahl)
 ACCOUNT_GROUPS = {
@@ -101,6 +103,35 @@ USER_STATES: dict[str, dict] = {}
 
 YES = {"ja", "j", "yes", "y"}
 NO = {"nein", "n", "no"}
+
+
+def _is_max_retries_exceeded_error(error_text: str) -> bool:
+    return "max retries exceeded with url" in (error_text or "").lower()
+
+
+def _pause_instance_if_needed(instance_name: str, error_text: str, *, source: str) -> bool:
+    if not _is_max_retries_exceeded_error(error_text):
+        return False
+    pause_until = state_store.set_mastodon_instance_pause(
+        instance_name,
+        consumers=["mastodon_control_bot"],
+        reporter="mastodon_control_bot",
+        pause_seconds=INSTANCE_PAUSE_SECONDS,
+        reason=f"{source}: {error_text}",
+    )
+    pause_until_dt = datetime.fromtimestamp(pause_until, BERLIN_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
+    logging.warning(
+        f"mastodon_control_bot: Instanz {instance_name} pausiert bis {pause_until_dt} "
+        f"wegen Netzwerkfehler (max retries exceeded). Quelle={source}"
+    )
+    return True
+
+
+def _resolve_instance_name_for_client(mastodon) -> str:
+    for name, client in INSTANCE_CLIENTS.items():
+        if client is mastodon:
+            return name
+    return ""
 
 
 # ----------------------------
@@ -901,6 +932,16 @@ def build_status_text() -> str:
 # Helpers: DM-Senden
 # ----------------------------
 def send_dm(mastodon, acct: str, in_reply_to_id, text: str, include_tagging_hint: bool = True):
+    instance_name = _resolve_instance_name_for_client(mastodon)
+    if instance_name:
+        pause_until = state_store.get_mastodon_instance_pause_until(
+            instance_name,
+            consumer="mastodon_control_bot",
+            now_ts=int(time_module.time()),
+        )
+        if pause_until > 0:
+            return
+
     prefix = f"@{normalize_acct(acct)} "
     base_max = max(1, MASTODON_DM_MAX - len(prefix))
     reply_to = in_reply_to_id
@@ -940,6 +981,8 @@ def send_dm(mastodon, acct: str, in_reply_to_id, text: str, include_tagging_hint
                 if status_id:
                     reply_to = status_id
         except Exception as e:
+            if instance_name and _pause_instance_if_needed(instance_name, str(e), source="send_dm"):
+                break
             logging.error(f"mastodon_control_bot: Fehler beim Senden der DM: {e}")
 
 
@@ -947,6 +990,14 @@ def send_dm(mastodon, acct: str, in_reply_to_id, text: str, include_tagging_hint
 # Tagging per Event-Bridge
 # ----------------------------
 async def _process_tag_event(instance_name: str, payload: dict):
+    pause_until = state_store.get_mastodon_instance_pause_until(
+        instance_name,
+        consumer="mastodon_control_bot",
+        now_ts=int(time_module.time()),
+    )
+    if pause_until > 0:
+        return
+
     mastodon = INSTANCE_CLIENTS.get(instance_name)
     if mastodon is None:
         return
@@ -2133,25 +2184,50 @@ async def _run_instance(instance_name: str, cfg: dict):
         logging.error(f"mastodon_control_bot: Fehler beim Initialisieren des Mastodon-Clients ({instance_name}): {e}")
         return
 
-    try:
-        me = mastodon.account_verify_credentials()
-        self_id = me["id"]
-    except Exception as e:
-        logging.error(f"mastodon_control_bot: Fehler bei account_verify_credentials ({instance_name}): {e}")
-        return
-
-    INSTANCE_CLIENTS[instance_name] = mastodon
-
     since_id = None
-    try:
-        recent = mastodon.notifications(limit=1)
-        if recent:
-            since_id = recent[0]["id"]
-    except Exception as e:
-        logging.error(f"mastodon_control_bot: Fehler beim Lesen der letzten Notification ({instance_name}): {e}")
+    self_id = None
 
     try:
         while True:
+            now_ts = int(time_module.time())
+            pause_until = state_store.get_mastodon_instance_pause_until(
+                instance_name,
+                consumer="mastodon_control_bot",
+                now_ts=now_ts,
+            )
+            if pause_until > 0:
+                INSTANCE_CLIENTS.pop(instance_name, None)
+                sleep_for = max(1, min(POLL_INTERVAL_SEC, pause_until - now_ts))
+                await asyncio.sleep(sleep_for)
+                self_id = None
+                continue
+
+            if self_id is None:
+                try:
+                    me = mastodon.account_verify_credentials()
+                    self_id = me["id"]
+                    INSTANCE_CLIENTS[instance_name] = mastodon
+                except KeyboardInterrupt:
+                    return
+                except Exception as e:
+                    _pause_instance_if_needed(instance_name, str(e), source="account_verify_credentials")
+                    logging.error(f"mastodon_control_bot: Fehler bei account_verify_credentials ({instance_name}): {e}")
+                    await asyncio.sleep(POLL_INTERVAL_SEC)
+                    continue
+
+            if since_id is None:
+                try:
+                    recent = mastodon.notifications(limit=1)
+                    if recent:
+                        since_id = recent[0]["id"]
+                except KeyboardInterrupt:
+                    return
+                except Exception as e:
+                    _pause_instance_if_needed(instance_name, str(e), source="notifications_bootstrap")
+                    logging.error(f"mastodon_control_bot: Fehler beim Lesen der letzten Notification ({instance_name}): {e}")
+                    await asyncio.sleep(POLL_INTERVAL_SEC)
+                    continue
+
             try:
                 notifications = await asyncio.to_thread(mastodon.notifications, since_id=since_id)
                 for notif in reversed(notifications):
@@ -2163,10 +2239,13 @@ async def _run_instance(instance_name: str, cfg: dict):
                     except Exception as e:
                         logging.error(f"mastodon_control_bot: Fehler beim Verarbeiten einer Notification ({instance_name}): {e}")
             except KeyboardInterrupt:
-                # Sanft beenden ohne Traceback-Spam
                 return
             except Exception as e:
+                _pause_instance_if_needed(instance_name, str(e), source="notifications_poll")
                 logging.error(f"mastodon_control_bot: Fehler beim Abfragen von Notifications ({instance_name}): {e}")
+                if _is_max_retries_exceeded_error(str(e)):
+                    self_id = None
+                    INSTANCE_CLIENTS.pop(instance_name, None)
 
             await asyncio.sleep(POLL_INTERVAL_SEC)
     finally:
@@ -2174,6 +2253,7 @@ async def _run_instance(instance_name: str, cfg: dict):
 
 
 async def start_bot():
+    state_store.prune_mastodon_instance_pauses()
     tasks = []
     if EVENT_ENABLED:
         tasks.append(asyncio.create_task(start_event_listener()))

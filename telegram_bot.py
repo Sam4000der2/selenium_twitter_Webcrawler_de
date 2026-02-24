@@ -4,6 +4,8 @@ import telegram
 import json
 import logging
 import re
+import time
+import state_store
 
 # DATA_FILE = 'data.json'
 DATA_FILE = '/home/sascha/bots/data.json'
@@ -35,6 +37,8 @@ if admin is None:
 
 _X_LINK_PREFIX = re.compile(r"(?i)\bhttps?://x\.com")
 _X_LINK_BARE = re.compile(r"(?i)\bx\.com(?=/)")
+RETRY_DELAYS_SECONDS = [60, 120, 180]
+MAX_EXTRA_SEND_RETRIES = len(RETRY_DELAYS_SECONDS)
 
 
 def replace_x_links_with_nitter(text: str) -> str:
@@ -81,11 +85,89 @@ def read_json_to_dict(json_file):
     return data_dict
 
 
+def _build_retry_payload(chat_id: int, message: str) -> dict:
+    return {
+        "chat_id": int(chat_id),
+        "message": str(message or ""),
+    }
+
+
+def _enqueue_telegram_retry(chat_id: int, message: str, error_text: str):
+    state_store.enqueue_failed_delivery(
+        channel="telegram",
+        target=str(chat_id),
+        payload=_build_retry_payload(chat_id=chat_id, message=message),
+        max_retries=MAX_EXTRA_SEND_RETRIES,
+        first_delay_seconds=RETRY_DELAYS_SECONDS[0],
+        last_error=error_text,
+    )
+
+
+async def _process_pending_telegram_retries(bot):
+    pending = state_store.get_due_failed_deliveries("telegram", limit=200)
+    if not pending:
+        return
+
+    for entry in pending:
+        delivery_id = int(entry.get("id", 0))
+        payload = entry.get("payload", {}) if isinstance(entry.get("payload"), dict) else {}
+        chat_id_raw = payload.get("chat_id", entry.get("target"))
+        message = str(payload.get("message") or "")
+        try:
+            chat_id = int(chat_id_raw)
+        except Exception:
+            state_store.mark_failed_delivery_exhausted(
+                delivery_id,
+                attempt_count=int(entry.get("attempt_count", 0)) + 1,
+                last_error=f"Ungültige chat_id im Retry-Payload: {chat_id_raw}",
+            )
+            logging.error(f"telegram_bot: Retry-Job {delivery_id} verworfen (ungültige chat_id={chat_id_raw}).")
+            continue
+
+        ok, err_txt = await send_telegram_message(bot, chat_id, message)
+        if ok:
+            state_store.remove_failed_delivery(delivery_id)
+            logging.info(f"telegram_bot: Retry-Job {delivery_id} erfolgreich an chat_id={chat_id}.")
+            continue
+
+        prev_attempt_count = int(entry.get("attempt_count", 0))
+        max_retries = max(1, int(entry.get("max_retries", MAX_EXTRA_SEND_RETRIES)))
+        new_attempt_count = prev_attempt_count + 1
+        if new_attempt_count >= max_retries:
+            state_store.mark_failed_delivery_exhausted(
+                delivery_id,
+                attempt_count=new_attempt_count,
+                last_error=err_txt,
+            )
+            logging.error(
+                f"telegram_bot: Retry-Job {delivery_id} ausgeschöpft "
+                f"(chat_id={chat_id}, versuche={new_attempt_count}/{max_retries}): {err_txt}"
+            )
+            continue
+
+        delay_index = min(new_attempt_count, len(RETRY_DELAYS_SECONDS) - 1)
+        next_retry_at = int(time.time()) + RETRY_DELAYS_SECONDS[delay_index]
+        state_store.schedule_failed_delivery_retry(
+            delivery_id,
+            attempt_count=new_attempt_count,
+            next_retry_at=next_retry_at,
+            last_error=err_txt,
+        )
+        logging.warning(
+            f"telegram_bot: Retry-Job {delivery_id} erneut geplant "
+            f"(chat_id={chat_id}, versuche={new_attempt_count}/{max_retries}, "
+            f"next_in={RETRY_DELAYS_SECONDS[delay_index]}s): {err_txt}"
+        )
+
+
 async def send_telegram_message(bot, chat_id, message):
     try:
         await bot.send_message(chat_id=chat_id, text=message)
+        return True, ""
     except Exception as e:
-        logging.error(f"telegram_bot: Fehler in def send_telegram_message: {e}")
+        err_txt = str(e)
+        logging.warning(f"telegram_bot: Fehler in def send_telegram_message (chat_id={chat_id}): {err_txt}")
+        return False, err_txt
 
 
 async def send_telegram_picture(bot, chat_id, images):
@@ -108,6 +190,9 @@ async def main(new_tweets):
     except Exception as e:
         logging.error(f"telegram_bot: Fehler in bot = telegram.Bot: {e}")
         return
+
+    state_store.prune_failed_deliveries()
+    await _process_pending_telegram_retries(bot)
 
     my_filter = load_data()
 
@@ -133,20 +218,28 @@ async def main(new_tweets):
                 keywords = entries["keywords"]
 
                 if username == "Servicemeldung":
-                    await send_telegram_message(bot, chat_id, message)
+                    ok, err_txt = await send_telegram_message(bot, chat_id, message)
+                    if not ok:
+                        _enqueue_telegram_retry(chat_id, message, err_txt)
 
                 elif username == "me_1234_me":
                     # admin ist bereits int oder None
                     target_admin = admin if admin is not None else chat_id
-                    await send_telegram_message(bot, target_admin, message)
+                    ok, err_txt = await send_telegram_message(bot, target_admin, message)
+                    if not ok:
+                        _enqueue_telegram_retry(target_admin, message, err_txt)
 
                 elif not keywords:
-                    await send_telegram_message(bot, chat_id, message)
+                    ok, err_txt = await send_telegram_message(bot, chat_id, message)
+                    if not ok:
+                        _enqueue_telegram_retry(chat_id, message, err_txt)
 
                 else:
                     keywordincontent = any(keyword in content for keyword in keywords)
                     if keywordincontent:
-                        await send_telegram_message(bot, chat_id, message)
+                        ok, err_txt = await send_telegram_message(bot, chat_id, message)
+                        if not ok:
+                            _enqueue_telegram_retry(chat_id, message, err_txt)
                         # await send_telegram_picture(bot, chat_id, images)
 
     except Exception as e:

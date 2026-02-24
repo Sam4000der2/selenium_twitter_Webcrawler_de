@@ -28,7 +28,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 - Netz- und API-Zugänge per Environment:
   - Telegram: `telegram_token`, `telegram_admin`
   - Mastodon: `opnv_berlin`, `opnv_toot`, `opnv_mastodon`
-  - Gemini: `GEMINI_API_KEY`
+  - Gemini: `GEMINI_API_KEY` (optional zusätzlich: `GEMINI_API_KEY1` bis `GEMINI_API_KEY4` für Round-Robin)
   - Optional: `MASTODON_CONTROL_EVENT_ENABLED|HOST|PORT`, `MASTODON_CONTROL_POLL_INTERVAL`
 
 > Hinweis: Alle Skripte verwenden absolute Pfade auf `/home/sascha/bots/…`. Wenn das Repo anders liegt, passe die Konstanten (`firefox_profile_path`, `geckodriver_path`, `filename`, `DATA_FILE`, `RULES_FILE`, Log-Pfade) in den Skripten an.
@@ -75,13 +75,17 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
    - Mastodon-Control: `python mastodon_control_bot.py`
 
 3) Alt-Texte testen (ohne Posten):  
-   `python test_alt_text.py --dummy` (offline) oder `python test_alt_text.py --image <pfad>` mit gesetztem `GEMINI_API_KEY`.
+   `python test_alt_text.py --dummy` (offline) oder `python test_alt_text.py --image <pfad>` mit gesetztem `GEMINI_API_KEY` (optional plus `GEMINI_API_KEY1..4`).
 
 ## Services (systemd)
 - Vorlagen liegen unter `services/`: `twitter_bot.service`, `bsky_bot.service`, `telegram_control_bot.service`, `mastodon_control_bot.service`, `nitter_bot.service`.
 - Alle Einheiten referenzieren ein gemeinsames Env-File (`/etc/twitter_bot.env`) mit den nötigen Secrets, z. B.:
   ```bash
   GEMINI_API_KEY=...
+  GEMINI_API_KEY1=...
+  GEMINI_API_KEY2=...
+  GEMINI_API_KEY3=...
+  GEMINI_API_KEY4=...
   telegram_token=...
   telegram_admin=...
   opnv_berlin=...
@@ -92,6 +96,10 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   ```bash
   sudo tee /etc/twitter_bot.env >/dev/null <<'EOF'
   GEMINI_API_KEY=DEIN_KEY
+  GEMINI_API_KEY1=OPTIONAL_KEY_1
+  GEMINI_API_KEY2=OPTIONAL_KEY_2
+  GEMINI_API_KEY3=OPTIONAL_KEY_3
+  GEMINI_API_KEY4=OPTIONAL_KEY_4
   telegram_token=DEIN_TELEGRAM_TOKEN
   telegram_admin=123456789
   opnv_berlin=TOKEN
