@@ -11,7 +11,7 @@ ARCHIVED_LOG="$LOGDIR/twitter_bot.log.$YESTERDAY"
 cd -- "$BASE_DIR"
 source venv/bin/activate
 
-#python store_twitter_logs.py
+python store_twitter_logs.py
 
 mkdir -p "$LOGDIR"
 
