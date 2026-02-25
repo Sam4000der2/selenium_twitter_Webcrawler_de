@@ -18,6 +18,7 @@ admin_env = os.environ.get("telegram_admin")
 
 LOG_DIR = '/home/sascha/bots/logs'
 MAX_ARCHIVES = 3
+TELEGRAM_CONTROL_TIMEOUT_PAUSE_SECONDS = 10 * 60
 
 # Admin-Chat-ID robust parsen (Telegram liefert ints)
 try:
@@ -109,6 +110,31 @@ def _run_cmd_no_sudo(cmd: list[str], timeout: int = 3) -> tuple[int, str]:
 def _looks_like_bus_error(output: str) -> bool:
     o = output or ""
     return any(m in o for m in BUS_ERROR_MARKERS)
+
+
+def _is_max_retries_exceeded_error(error_text: str) -> bool:
+    return "max retries exceeded with url" in (error_text or "").lower()
+
+
+def _is_timeout_error(error_text: str) -> bool:
+    text = (error_text or "").lower()
+    if not text:
+        return False
+    markers = (
+        "timed out",
+        "read timeout",
+        "connect timeout",
+        "gateway timeout",
+        "gateway time-out",
+    )
+    if any(marker in text for marker in markers):
+        return True
+    return bool(re.search(r"\btime[ -]?out\b", text))
+
+
+def _should_pause_polling(error_text: str) -> bool:
+    return _is_max_retries_exceeded_error(error_text) or _is_timeout_error(error_text)
+
 
 def get_log_files() -> list[str]:
     """
@@ -1207,6 +1233,18 @@ async def start_bot():
             updates = await bot.get_updates(offset=update_id)
             backoff_seconds = 1  # Reset nach erfolgreichem Abruf
         except Exception as e:
+            error_text = str(e)
+            if _should_pause_polling(error_text):
+                pause_until = datetime.now() + timedelta(seconds=TELEGRAM_CONTROL_TIMEOUT_PAUSE_SECONDS)
+                pause_until_txt = pause_until.strftime("%Y-%m-%d %H:%M:%S")
+                logging.warning(
+                    "telegram_control_bot: Timeout/Netzwerkfehler erkannt in start_bot; "
+                    f"pausiere Polling fuer {TELEGRAM_CONTROL_TIMEOUT_PAUSE_SECONDS // 60} Minuten "
+                    f"bis {pause_until_txt}. Fehler: {error_text}"
+                )
+                backoff_seconds = 1
+                await asyncio.sleep(TELEGRAM_CONTROL_TIMEOUT_PAUSE_SECONDS)
+                continue
             logging.warning(f"telegram_control_bot: Error getting updates in start_bot: {e}")
             await asyncio.sleep(backoff_seconds)
             backoff_seconds = min(backoff_seconds * 2, 300)
