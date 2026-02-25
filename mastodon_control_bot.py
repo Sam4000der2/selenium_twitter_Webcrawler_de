@@ -109,9 +109,33 @@ def _is_max_retries_exceeded_error(error_text: str) -> bool:
     return "max retries exceeded with url" in (error_text or "").lower()
 
 
-def _pause_instance_if_needed(instance_name: str, error_text: str, *, source: str) -> bool:
-    if not _is_max_retries_exceeded_error(error_text):
+def _is_timeout_error(error_text: str) -> bool:
+    text = (error_text or "").lower()
+    if not text:
         return False
+    markers = (
+        "timed out",
+        "read timeout",
+        "connect timeout",
+        "gateway timeout",
+        "gateway time-out",
+    )
+    if any(marker in text for marker in markers):
+        return True
+    return bool(re.search(r"\btime[ -]?out\b", text))
+
+
+def _is_instance_pause_error(error_text: str) -> bool:
+    return _is_max_retries_exceeded_error(error_text) or _is_timeout_error(error_text)
+
+
+def _pause_instance_if_needed(instance_name: str, error_text: str, *, source: str) -> bool:
+    if not _is_instance_pause_error(error_text):
+        return False
+    if _is_max_retries_exceeded_error(error_text):
+        error_kind = "max retries exceeded"
+    else:
+        error_kind = "timeout"
     pause_until = state_store.set_mastodon_instance_pause(
         instance_name,
         consumers=["mastodon_control_bot"],
@@ -122,7 +146,7 @@ def _pause_instance_if_needed(instance_name: str, error_text: str, *, source: st
     pause_until_dt = datetime.fromtimestamp(pause_until, BERLIN_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
     logging.warning(
         f"mastodon_control_bot: Instanz {instance_name} pausiert bis {pause_until_dt} "
-        f"wegen Netzwerkfehler (max retries exceeded). Quelle={source}"
+        f"wegen Netzwerkfehler ({error_kind}). Quelle={source}"
     )
     return True
 
@@ -327,14 +351,14 @@ def save_rules(data: dict):
     try:
         state_store.save_mastodon_rules(payload)
     except Exception as e:
-        logging.error(f"mastodon_control_bot: Fehler beim Speichern der Regeln: {e}")
+        logging.warning(f"mastodon_control_bot: Fehler beim Speichern der Regeln: {e}")
 
 
 def _reset_rules_file(reason: str):
     try:
         save_rules(_empty_rules())
     except Exception as e:
-        logging.error(f"mastodon_control_bot: Reset der Regeln fehlgeschlagen ({reason}): {e}")
+        logging.warning(f"mastodon_control_bot: Reset der Regeln fehlgeschlagen ({reason}): {e}")
 
 
 def _get_status_id(status_obj):
@@ -924,7 +948,7 @@ def build_status_text() -> str:
 
         return "\n".join(lines).strip()
     except Exception as e:
-        logging.error(f"mastodon_control_bot: Fehler in build_status_text: {e}")
+        logging.warning(f"mastodon_control_bot: Fehler in build_status_text: {e}")
         return "Status konnte nicht ermittelt werden."
 
 
@@ -983,7 +1007,7 @@ def send_dm(mastodon, acct: str, in_reply_to_id, text: str, include_tagging_hint
         except Exception as e:
             if instance_name and _pause_instance_if_needed(instance_name, str(e), source="send_dm"):
                 break
-            logging.error(f"mastodon_control_bot: Fehler beim Senden der DM: {e}")
+            logging.warning(f"mastodon_control_bot: Fehler beim Senden der DM: {e}")
 
 
 # ----------------------------
@@ -1073,7 +1097,7 @@ async def _handle_event_connection(reader: asyncio.StreamReader, writer: asyncio
         try:
             payload = json.loads(raw.decode("utf-8"))
         except Exception as e:
-            logging.error(f"mastodon_control_bot: Ungültiges Event-Payload: {e}")
+            logging.warning(f"mastodon_control_bot: Ungültiges Event-Payload: {e}")
             return
 
         instance = payload.get("instance")
@@ -1095,7 +1119,7 @@ async def start_event_listener():
     try:
         server = await asyncio.start_server(_handle_event_connection, host=EVENT_HOST, port=EVENT_PORT)
     except Exception as e:
-        logging.error(f"mastodon_control_bot: Event-Listener konnte nicht gestartet werden: {e}")
+        logging.warning(f"mastodon_control_bot: Event-Listener konnte nicht gestartet werden: {e}")
         return
 
     async with server:
@@ -2161,7 +2185,7 @@ async def process_notification(mastodon, instance_name, notif, self_id):
     try:
         await handle_command(mastodon, instance_name, status, account)
     except Exception as e:
-        logging.error(f"mastodon_control_bot: Fehler in handle_command ({instance_name}): {e}")
+        logging.warning(f"mastodon_control_bot: Fehler in handle_command ({instance_name}): {e}")
 
 
 # ----------------------------
@@ -2172,7 +2196,7 @@ async def _run_instance(instance_name: str, cfg: dict):
     base_url = cfg.get("api_base_url")
     access_token = os.environ.get(token_env or "")
     if not access_token:
-        logging.error(f"mastodon_control_bot: Kein Access-Token in ENV '{token_env}' für {instance_name}")
+        logging.warning(f"mastodon_control_bot: Kein Access-Token in ENV '{token_env}' für {instance_name}")
         return
 
     try:
@@ -2181,7 +2205,7 @@ async def _run_instance(instance_name: str, cfg: dict):
             api_base_url=base_url,
         )
     except Exception as e:
-        logging.error(f"mastodon_control_bot: Fehler beim Initialisieren des Mastodon-Clients ({instance_name}): {e}")
+        logging.warning(f"mastodon_control_bot: Fehler beim Initialisieren des Mastodon-Clients ({instance_name}): {e}")
         return
 
     since_id = None
@@ -2211,7 +2235,7 @@ async def _run_instance(instance_name: str, cfg: dict):
                     return
                 except Exception as e:
                     _pause_instance_if_needed(instance_name, str(e), source="account_verify_credentials")
-                    logging.error(f"mastodon_control_bot: Fehler bei account_verify_credentials ({instance_name}): {e}")
+                    logging.warning(f"mastodon_control_bot: Fehler bei account_verify_credentials ({instance_name}): {e}")
                     await asyncio.sleep(POLL_INTERVAL_SEC)
                     continue
 
@@ -2224,7 +2248,7 @@ async def _run_instance(instance_name: str, cfg: dict):
                     return
                 except Exception as e:
                     _pause_instance_if_needed(instance_name, str(e), source="notifications_bootstrap")
-                    logging.error(f"mastodon_control_bot: Fehler beim Lesen der letzten Notification ({instance_name}): {e}")
+                    logging.warning(f"mastodon_control_bot: Fehler beim Lesen der letzten Notification ({instance_name}): {e}")
                     await asyncio.sleep(POLL_INTERVAL_SEC)
                     continue
 
@@ -2237,13 +2261,13 @@ async def _run_instance(instance_name: str, cfg: dict):
                     try:
                         await process_notification(mastodon, instance_name, notif, self_id)
                     except Exception as e:
-                        logging.error(f"mastodon_control_bot: Fehler beim Verarbeiten einer Notification ({instance_name}): {e}")
+                        logging.warning(f"mastodon_control_bot: Fehler beim Verarbeiten einer Notification ({instance_name}): {e}")
             except KeyboardInterrupt:
                 return
             except Exception as e:
                 _pause_instance_if_needed(instance_name, str(e), source="notifications_poll")
-                logging.error(f"mastodon_control_bot: Fehler beim Abfragen von Notifications ({instance_name}): {e}")
-                if _is_max_retries_exceeded_error(str(e)):
+                logging.warning(f"mastodon_control_bot: Fehler beim Abfragen von Notifications ({instance_name}): {e}")
+                if _is_instance_pause_error(str(e)):
                     self_id = None
                     INSTANCE_CLIENTS.pop(instance_name, None)
 
@@ -2260,7 +2284,7 @@ async def start_bot():
     for name, cfg in INSTANCES.items():
         tasks.append(asyncio.create_task(_run_instance(name, cfg)))
     if not tasks:
-        logging.error("mastodon_control_bot: Keine Instanz-Tasks gestartet.")
+        logging.warning("mastodon_control_bot: Keine Instanz-Tasks gestartet.")
         return
     try:
         await asyncio.gather(*tasks)
