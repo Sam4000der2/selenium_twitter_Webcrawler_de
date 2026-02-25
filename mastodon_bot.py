@@ -4,6 +4,7 @@ import re
 import logging
 from threading import Lock
 from datetime import date, datetime, time, timedelta
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 from typing import Any
 from PIL import Image
@@ -171,6 +172,64 @@ MASTODON_FIRST_POST_MIN_CONTENT_LEN = int(os.environ.get("MASTODON_FIRST_POST_MI
 SEND_RETRY_DELAYS_SECONDS = [60, 120, 180]
 SEND_MAX_EXTRA_RETRIES = len(SEND_RETRY_DELAYS_SECONDS)
 INSTANCE_PAUSE_SECONDS = 15 * 60
+DEFAULT_NITTER_IMAGE_RETRY_HOSTS = {"localhost", "127.0.0.1", "nitter.nuc.lan"}
+
+
+def _parse_retry_delays(raw: str | None, fallback: list[int]) -> list[int]:
+    tokens = re.split(r"[,\s;]+", (raw or "").strip())
+    parsed: list[int] = []
+    for token in tokens:
+        if not token:
+            continue
+        try:
+            value = int(token)
+        except ValueError:
+            continue
+        if value > 0:
+            parsed.append(value)
+    return parsed or list(fallback)
+
+
+def _parse_host_set(raw: str | None, fallback: set[str]) -> set[str]:
+    tokens = re.split(r"[,\s;]+", (raw or "").strip().lower())
+    hosts = {token for token in tokens if token}
+    return hosts or set(fallback)
+
+
+IMAGE_DOWNLOAD_RETRY_ENABLED = os.environ.get(
+    "MASTODON_IMAGE_DOWNLOAD_RETRY_ENABLED", "1"
+).lower() not in {"0", "false", "no"}
+IMAGE_DOWNLOAD_RETRY_ONLY_NITTER = os.environ.get(
+    "MASTODON_IMAGE_DOWNLOAD_RETRY_ONLY_NITTER", "1"
+).lower() not in {"0", "false", "no"}
+IMAGE_DOWNLOAD_RETRY_DELAYS_SECONDS = _parse_retry_delays(
+    os.environ.get("MASTODON_IMAGE_DOWNLOAD_RETRY_DELAYS_SECONDS"),
+    SEND_RETRY_DELAYS_SECONDS,
+)
+IMAGE_DOWNLOAD_RETRY_NITTER_HOSTS = _parse_host_set(
+    os.environ.get("MASTODON_IMAGE_DOWNLOAD_RETRY_NITTER_HOSTS"),
+    DEFAULT_NITTER_IMAGE_RETRY_HOSTS,
+)
+
+
+def _is_nitter_pic_url(url: str) -> bool:
+    try:
+        parsed = urlparse(url or "")
+    except Exception:
+        return False
+    host = (parsed.hostname or "").lower()
+    path = parsed.path or ""
+    if not host or "/pic/" not in path:
+        return False
+    return host in IMAGE_DOWNLOAD_RETRY_NITTER_HOSTS
+
+
+def _should_retry_image_download(url: str) -> bool:
+    if not IMAGE_DOWNLOAD_RETRY_ENABLED or not IMAGE_DOWNLOAD_RETRY_DELAYS_SECONDS:
+        return False
+    if not IMAGE_DOWNLOAD_RETRY_ONLY_NITTER:
+        return True
+    return _is_nitter_pic_url(url)
 
 
 def _is_max_retries_exceeded_error(error_text: str) -> bool:
@@ -890,15 +949,41 @@ def extract_hashtags(content, username):
 
 
 async def download_image(session, url):
-    try:
-        async with session.get(url) as response:
-            if response.status == 200:
-                return await response.read()
-            logging.error(f"mastodon_bot: Fehler beim Herunterladen des Bildes: {url}")
-            return None
-    except Exception as e:
-        logging.error(f"mastodon_bot: Fehler beim Herunterladen des Bildes: {e}")
+    retry_delays = IMAGE_DOWNLOAD_RETRY_DELAYS_SECONDS if _should_retry_image_download(url) else []
+    total_attempts = 1 + len(retry_delays)
+
+    for attempt in range(1, total_attempts + 1):
+        error_detail = ""
+        try:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    if attempt > 1:
+                        logging.warning(
+                            "mastodon_bot: Bild-Download nach Retry erfolgreich "
+                            f"(versuch={attempt}/{total_attempts}): {url}"
+                        )
+                    return await response.read()
+                error_detail = f"HTTP {response.status}"
+        except Exception as e:
+            error_detail = str(e)
+
+        if attempt <= len(retry_delays):
+            delay = retry_delays[attempt - 1]
+            logging.warning(
+                "mastodon_bot: Bild-Download fehlgeschlagen "
+                f"(versuch={attempt}/{total_attempts}, reason={error_detail}), "
+                f"retry in {delay}s: {url}"
+            )
+            await asyncio.sleep(delay)
+            continue
+
+        logging.error(
+            "mastodon_bot: Fehler beim Herunterladen des Bildes "
+            f"(versuch={attempt}/{total_attempts}, reason={error_detail}): {url}"
+        )
         return None
+
+    return None
 
 
 async def download_binary(session, url):
