@@ -781,6 +781,8 @@ def filter_short_mastodon_messages(
     Entfernt Posts, deren Kerntext kürzer als die Mindestlänge ist.
     Bei mehrteiligen Posts können per keep_all_parts alle Segmente behalten werden,
     damit Header/Meta-Blöcke beim Thread-Split nicht verloren gehen.
+    Wenn der gesamte Originaltext sehr kurz oder leer ist, wird die Mindestlänge
+    ignoriert, damit der Post trotzdem gesendet werden kann.
     """
     if min_len <= 0:
         return messages
@@ -788,9 +790,15 @@ def filter_short_mastodon_messages(
     if keep_all_parts and len(messages) > 1:
         return messages
 
+    cores = [_extract_core_content(msg, username) for msg in messages]
+    if cores and all(len(core) < min_len for core in cores):
+        logging.info(
+            f"mastodon_bot: Mindestlänge wird für {username} ignoriert (Originaltext kurz/leer)."
+        )
+        return messages
+
     filtered: list[str] = []
-    for msg in messages:
-        core = _extract_core_content(msg, username)
+    for msg, core in zip(messages, cores):
         if len(core) < min_len:
             logging.warning(
                 f"mastodon_bot: Überspringe Mastodon-Post (zu kurz: {len(core)} Zeichen) für {username}"
