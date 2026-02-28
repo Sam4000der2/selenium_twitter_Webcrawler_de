@@ -64,6 +64,7 @@ BERLIN_TZ = ZoneInfo("Europe/Berlin")
 EVENT_HOST = os.environ.get("MASTODON_CONTROL_EVENT_HOST", "127.0.0.1")
 EVENT_PORT = int(os.environ.get("MASTODON_CONTROL_EVENT_PORT", "8123"))
 EVENT_ENABLED = os.environ.get("MASTODON_CONTROL_EVENT_ENABLED", "1").lower() not in {"0", "false", "no"}
+BOT_LOG_FORMAT = "%(asctime)s %(levelname)s:%(message)s"
 
 # Instanz-Registry für Events (wird in _run_instance befüllt)
 INSTANCE_CLIENTS: dict[str, Mastodon] = {}
@@ -78,9 +79,53 @@ ACCOUNT_GROUPS = {
     "vbbvip": ["vbb", "VIP"],
 }
 
+DNS_ERROR_MARKERS = (
+    "failed to resolve",
+    "temporary failure in name resolution",
+    "name or service not known",
+    "nodename nor servname provided",
+    "no address associated with hostname",
+    "getaddrinfo failed",
+    "name resolution",
+    "dns",
+)
+
+CONNECTION_ERROR_MARKERS = (
+    "failed to establish a new connection",
+    "newconnectionerror",
+    "connection aborted",
+    "connection reset",
+    "connection refused",
+    "connection broken",
+    "network is unreachable",
+    "remote end closed connection",
+    "remotedisconnected",
+    "server disconnected",
+    "remoteprotocolerror",
+    "protocolerror",
+    "readerror",
+    "connecterror",
+)
+
+GATEWAY_ERROR_MARKERS = (
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "gateway time-out",
+)
+
+TLS_ERROR_MARKERS = (
+    "proxyerror",
+    "sslerror",
+    "certificate verify failed",
+    "tlsv1 alert",
+)
+
+HTTP_GATEWAY_STATUS_RX = re.compile(r"\b(?:502|503|504)\b")
+
 
 def setup_logging():
-    fmt = logging.Formatter("%(asctime)s %(levelname)s:%(message)s")
+    fmt = logging.Formatter(BOT_LOG_FORMAT)
     logger = logging.getLogger()
     logger.setLevel(logging.WARNING)
     if logger.handlers:
@@ -98,11 +143,47 @@ def setup_logging():
 
 setup_logging()
 
+
+def _build_file_logger(name: str, *, level: int) -> logging.Logger:
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    logger.propagate = False
+
+    target_path = os.path.abspath(BOT_LOG_FILE)
+    for handler in logger.handlers:
+        if isinstance(handler, logging.FileHandler) and getattr(handler, "baseFilename", "") == target_path:
+            handler.setLevel(level)
+            handler.setFormatter(logging.Formatter(BOT_LOG_FORMAT))
+            return logger
+
+    try:
+        handler = logging.FileHandler(BOT_LOG_FILE)
+    except Exception:
+        return logger
+
+    handler.setLevel(level)
+    handler.setFormatter(logging.Formatter(BOT_LOG_FORMAT))
+    logger.addHandler(handler)
+    return logger
+
+
+PAUSE_INFO_LOGGER = _build_file_logger("mastodon_control_bot.pause", level=logging.INFO)
+
+
+def _log_pause_info(message: str) -> None:
+    if PAUSE_INFO_LOGGER.handlers:
+        PAUSE_INFO_LOGGER.info(message)
+
 # Dialog-State (im RAM, reicht für einfache DM-Flows)
 USER_STATES: dict[str, dict] = {}
 
 YES = {"ja", "j", "yes", "y"}
 NO = {"nein", "n", "no"}
+
+
+def _contains_any_marker(error_text: str, markers: tuple[str, ...]) -> bool:
+    text = (error_text or "").lower()
+    return bool(text) and any(marker in text for marker in markers)
 
 
 def _is_max_retries_exceeded_error(error_text: str) -> bool:
@@ -125,17 +206,56 @@ def _is_timeout_error(error_text: str) -> bool:
     return bool(re.search(r"\btime[ -]?out\b", text))
 
 
+def _is_dns_error(error_text: str) -> bool:
+    return _contains_any_marker(error_text, DNS_ERROR_MARKERS)
+
+
+def _is_connection_error(error_text: str) -> bool:
+    return _contains_any_marker(error_text, CONNECTION_ERROR_MARKERS)
+
+
+def _is_gateway_error(error_text: str) -> bool:
+    text = (error_text or "").lower()
+    return _contains_any_marker(text, GATEWAY_ERROR_MARKERS) or bool(HTTP_GATEWAY_STATUS_RX.search(text))
+
+
+def _is_tls_error(error_text: str) -> bool:
+    return _contains_any_marker(error_text, TLS_ERROR_MARKERS)
+
+
+def _describe_network_error(error_text: str) -> str:
+    if _is_max_retries_exceeded_error(error_text):
+        return "max retries exceeded"
+    if _is_timeout_error(error_text):
+        return "timeout"
+    if _is_dns_error(error_text):
+        return "dns/namensaufloesung"
+    if _is_gateway_error(error_text):
+        return "gateway"
+    if _is_tls_error(error_text):
+        return "ssl/tls"
+    if _is_connection_error(error_text):
+        return "verbindung"
+    return "netzwerk"
+
+
 def _is_instance_pause_error(error_text: str) -> bool:
-    return _is_max_retries_exceeded_error(error_text) or _is_timeout_error(error_text)
+    return any(
+        (
+            _is_max_retries_exceeded_error(error_text),
+            _is_timeout_error(error_text),
+            _is_dns_error(error_text),
+            _is_connection_error(error_text),
+            _is_gateway_error(error_text),
+            _is_tls_error(error_text),
+        )
+    )
 
 
 def _pause_instance_if_needed(instance_name: str, error_text: str, *, source: str) -> bool:
     if not _is_instance_pause_error(error_text):
         return False
-    if _is_max_retries_exceeded_error(error_text):
-        error_kind = "max retries exceeded"
-    else:
-        error_kind = "timeout"
+    error_kind = _describe_network_error(error_text)
     pause_until = state_store.set_mastodon_instance_pause(
         instance_name,
         consumers=["mastodon_control_bot"],
@@ -144,7 +264,7 @@ def _pause_instance_if_needed(instance_name: str, error_text: str, *, source: st
         reason=f"{source}: {error_text}",
     )
     pause_until_dt = datetime.fromtimestamp(pause_until, BERLIN_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
-    logging.warning(
+    _log_pause_info(
         f"mastodon_control_bot: Instanz {instance_name} pausiert bis {pause_until_dt} "
         f"wegen Netzwerkfehler ({error_kind}). Quelle={source}"
     )

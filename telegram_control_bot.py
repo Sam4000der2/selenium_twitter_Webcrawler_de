@@ -19,6 +19,7 @@ admin_env = os.environ.get("telegram_admin")
 LOG_DIR = '/home/sascha/bots/logs'
 MAX_ARCHIVES = 3
 TELEGRAM_CONTROL_TIMEOUT_PAUSE_SECONDS = 10 * 60
+BOT_LOG_FORMAT = '%(asctime)s %(levelname)s:%(message)s'
 
 # Admin-Chat-ID robust parsen (Telegram liefert ints)
 try:
@@ -30,7 +31,7 @@ except Exception:
 logging.basicConfig(
     filename='/home/sascha/bots/twitter_bot.log',
     level=logging.WARNING,
-    format='%(asctime)s %(levelname)s:%(message)s'
+    format=BOT_LOG_FORMAT
 )
 
 # Dateiname für Chat-IDs und Filterregeln
@@ -85,6 +86,50 @@ BUS_ERROR_MARKERS = (
 # Zeitstempel am Anfang der Zeile
 TS_RX = re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+(?P<rest>.*)$")
 
+DNS_ERROR_MARKERS = (
+    "failed to resolve",
+    "temporary failure in name resolution",
+    "name or service not known",
+    "nodename nor servname provided",
+    "no address associated with hostname",
+    "getaddrinfo failed",
+    "name resolution",
+    "dns",
+)
+
+CONNECTION_ERROR_MARKERS = (
+    "failed to establish a new connection",
+    "newconnectionerror",
+    "connection aborted",
+    "connection reset",
+    "connection refused",
+    "connection broken",
+    "network is unreachable",
+    "remote end closed connection",
+    "remotedisconnected",
+    "server disconnected",
+    "remoteprotocolerror",
+    "protocolerror",
+    "readerror",
+    "connecterror",
+)
+
+GATEWAY_ERROR_MARKERS = (
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "gateway time-out",
+)
+
+TLS_ERROR_MARKERS = (
+    "proxyerror",
+    "sslerror",
+    "certificate verify failed",
+    "tlsv1 alert",
+)
+
+HTTP_GATEWAY_STATUS_RX = re.compile(r"\b(?:502|503|504)\b")
+
 if not BOT_TOKEN:
     logging.error("telegram_control_bot: ENV 'telegram_token' ist nicht gesetzt.")
 if admin is None:
@@ -112,6 +157,42 @@ def _looks_like_bus_error(output: str) -> bool:
     return any(m in o for m in BUS_ERROR_MARKERS)
 
 
+def _build_file_logger(name: str, *, level: int) -> logging.Logger:
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    logger.propagate = False
+
+    target_path = os.path.abspath(BOT_LOG_FILE)
+    for handler in logger.handlers:
+        if isinstance(handler, logging.FileHandler) and getattr(handler, "baseFilename", "") == target_path:
+            handler.setLevel(level)
+            handler.setFormatter(logging.Formatter(BOT_LOG_FORMAT))
+            return logger
+
+    try:
+        handler = logging.FileHandler(BOT_LOG_FILE)
+    except Exception:
+        return logger
+
+    handler.setLevel(level)
+    handler.setFormatter(logging.Formatter(BOT_LOG_FORMAT))
+    logger.addHandler(handler)
+    return logger
+
+
+PAUSE_INFO_LOGGER = _build_file_logger("telegram_control_bot.pause", level=logging.INFO)
+
+
+def _log_pause_info(message: str) -> None:
+    if PAUSE_INFO_LOGGER.handlers:
+        PAUSE_INFO_LOGGER.info(message)
+
+
+def _contains_any_marker(error_text: str, markers: tuple[str, ...]) -> bool:
+    text = (error_text or "").lower()
+    return bool(text) and any(marker in text for marker in markers)
+
+
 def _is_max_retries_exceeded_error(error_text: str) -> bool:
     return "max retries exceeded with url" in (error_text or "").lower()
 
@@ -132,8 +213,50 @@ def _is_timeout_error(error_text: str) -> bool:
     return bool(re.search(r"\btime[ -]?out\b", text))
 
 
+def _is_dns_error(error_text: str) -> bool:
+    return _contains_any_marker(error_text, DNS_ERROR_MARKERS)
+
+
+def _is_connection_error(error_text: str) -> bool:
+    return _contains_any_marker(error_text, CONNECTION_ERROR_MARKERS)
+
+
+def _is_gateway_error(error_text: str) -> bool:
+    text = (error_text or "").lower()
+    return _contains_any_marker(text, GATEWAY_ERROR_MARKERS) or bool(HTTP_GATEWAY_STATUS_RX.search(text))
+
+
+def _is_tls_error(error_text: str) -> bool:
+    return _contains_any_marker(error_text, TLS_ERROR_MARKERS)
+
+
+def _describe_network_error(error_text: str) -> str:
+    if _is_max_retries_exceeded_error(error_text):
+        return "max retries exceeded"
+    if _is_timeout_error(error_text):
+        return "timeout"
+    if _is_dns_error(error_text):
+        return "dns/namensaufloesung"
+    if _is_gateway_error(error_text):
+        return "gateway"
+    if _is_tls_error(error_text):
+        return "ssl/tls"
+    if _is_connection_error(error_text):
+        return "verbindung"
+    return "netzwerk"
+
+
 def _should_pause_polling(error_text: str) -> bool:
-    return _is_max_retries_exceeded_error(error_text) or _is_timeout_error(error_text)
+    return any(
+        (
+            _is_max_retries_exceeded_error(error_text),
+            _is_timeout_error(error_text),
+            _is_dns_error(error_text),
+            _is_connection_error(error_text),
+            _is_gateway_error(error_text),
+            _is_tls_error(error_text),
+        )
+    )
 
 
 def get_log_files() -> list[str]:
@@ -1237,8 +1360,9 @@ async def start_bot():
             if _should_pause_polling(error_text):
                 pause_until = datetime.now() + timedelta(seconds=TELEGRAM_CONTROL_TIMEOUT_PAUSE_SECONDS)
                 pause_until_txt = pause_until.strftime("%Y-%m-%d %H:%M:%S")
-                logging.warning(
-                    "telegram_control_bot: Timeout/Netzwerkfehler erkannt in start_bot; "
+                _log_pause_info(
+                    "telegram_control_bot: Pause aktiviert in start_bot wegen "
+                    f"{_describe_network_error(error_text)}; "
                     f"pausiere Polling fuer {TELEGRAM_CONTROL_TIMEOUT_PAUSE_SECONDS // 60} Minuten "
                     f"bis {pause_until_txt}. Fehler: {error_text}"
                 )
