@@ -20,8 +20,9 @@ import telegram_bot
 import mastodon_bot
 import state_store
 from url_safety import validate_outbound_url
+from paths import BASE_DIR as DEFAULT_BASE_DIR
 
-BASE_DIR = os.environ.get("BOTS_BASE_DIR", "/home/sascha/bots")
+BASE_DIR = os.environ.get("BOTS_BASE_DIR", str(DEFAULT_BASE_DIR))
 LOG_PATH = os.path.join(BASE_DIR, "twitter_bot.log")
 POLL_INTERVAL = int(os.environ.get("NITTER_POLL_INTERVAL", "60"))
 HISTORY_LIMIT = int(os.environ.get("NITTER_HISTORY_LIMIT", "200"))

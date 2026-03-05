@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from mastodon import Mastodon
 from mastodon_text_utils import split_mastodon_text
 import state_store
+from paths import BASE_DIR, LOG_FILE
 
 # ----------------------------
 # Konstanten / Pfade
@@ -27,7 +28,7 @@ INSTANCES = {
 }
 
 # Logfile (nur zentrales Log)
-BOT_LOG_FILE = "/home/sascha/bots/twitter_bot.log"
+BOT_LOG_FILE = LOG_FILE
 
 # Bots für Fehlerzählung (letzte 24h) im /status
 ALT_TEXT_CATEGORY = "Alt-Text Generierung"
@@ -1014,15 +1015,15 @@ def build_status_text() -> str:
     try:
         twitter_state, _ = get_service_state(
             "twitter_bot.service",
-            fallback_patterns=["twitter_bot", "twitter_bot.py", "/home/sascha/bots/twitter"]
+            fallback_patterns=["twitter_bot", "twitter_bot.py", str(BASE_DIR / "twitter")]
         )
         bsky_state, _ = get_service_state(
             "bsky_bot.service",
-            fallback_patterns=["bsky_bot", "bsky_bot.py", "/home/sascha/bots/bsky", "bluesky"]
+            fallback_patterns=["bsky_bot", "bsky_bot.py", str(BASE_DIR / "bsky"), "bluesky"]
         )
         nitter_state, _ = get_service_state(
             "nitter_bot.service",
-            fallback_patterns=["nitter_bot", "nitter_bot.py", "/home/sascha/Dokumente/bots/nitter"]
+            fallback_patterns=["nitter_bot", "nitter_bot.py", str(BASE_DIR / "nitter")]
         )
 
         twitter_running = twitter_state.startswith("läuft")

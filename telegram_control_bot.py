@@ -9,6 +9,7 @@ import logging
 import subprocess
 import re
 from mastodon_text_utils import split_mastodon_text
+from paths import BASE_DIR, DATA_FILE as DEFAULT_DATA_FILE, LOG_DIR as DEFAULT_LOG_DIR, LOG_FILE
 
 # Secrets aus ENV (global + local):
 #   telegram_token  -> Bot Token
@@ -16,7 +17,7 @@ from mastodon_text_utils import split_mastodon_text
 BOT_TOKEN = os.environ.get("telegram_token")
 admin_env = os.environ.get("telegram_admin")
 
-LOG_DIR = '/home/sascha/bots/logs'
+LOG_DIR = DEFAULT_LOG_DIR
 MAX_ARCHIVES = 3
 TELEGRAM_CONTROL_TIMEOUT_PAUSE_SECONDS = 10 * 60
 BOT_LOG_FORMAT = '%(asctime)s %(levelname)s:%(message)s'
@@ -29,16 +30,16 @@ except Exception:
 
 # Configure logging (für dieses Script)
 logging.basicConfig(
-    filename='/home/sascha/bots/twitter_bot.log',
+    filename=LOG_FILE,
     level=logging.WARNING,
     format=BOT_LOG_FORMAT
 )
 
 # Dateiname für Chat-IDs und Filterregeln
-DATA_FILE = '/home/sascha/bots/data.json'
+DATA_FILE = DEFAULT_DATA_FILE
 
 # Zentrales Bot-Logfile (alle Module schreiben hier rein)
-BOT_LOG_FILE = '/home/sascha/bots/twitter_bot.log'
+BOT_LOG_FILE = LOG_FILE
 
 # Bots für Fehlerzählung (letzte 24h) im /status
 ALT_TEXT_CATEGORY = "Alt-Text Generierung"
@@ -794,15 +795,15 @@ async def status_command(bot, chat_id: int, admin_view: bool = False):
     try:
         twitter_state, _ = get_service_state(
             "twitter_bot.service",
-            fallback_patterns=["twitter_bot", "twitter_bot.py", "/home/sascha/bots/twitter"]
+            fallback_patterns=["twitter_bot", "twitter_bot.py", str(BASE_DIR / "twitter")]
         )
         bsky_state, _ = get_service_state(
             "bsky_bot.service",
-            fallback_patterns=["bsky_bot", "bsky_bot.py", "/home/sascha/bots/bsky", "bluesky"]
+            fallback_patterns=["bsky_bot", "bsky_bot.py", str(BASE_DIR / "bsky"), "bluesky"]
         )
         nitter_state, _ = get_service_state(
             "nitter_bot.service",
-            fallback_patterns=["nitter_bot", "nitter_bot.py", "/home/sascha/Dokumente/bots/nitter"]
+            fallback_patterns=["nitter_bot", "nitter_bot.py", str(BASE_DIR / "nitter")]
         )
 
         twitter_running = twitter_state.startswith("läuft")

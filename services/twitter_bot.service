@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 EnvironmentFile=/etc/twitter_bot.env
-WorkingDirectory=/home/sascha/bots
-ExecStart=/home/sascha/bots/venv/bin/python3 /home/sascha/bots/twitter_bot.py
+WorkingDirectory=%h
+ExecStart=/bin/bash -lc '"${BOTS_BASE_DIR:?missing BOTS_BASE_DIR}/venv/bin/python3" "${BOTS_BASE_DIR:?missing BOTS_BASE_DIR}/twitter_bot.py"'
 Restart=always
 RestartSec=10
 User=sascha

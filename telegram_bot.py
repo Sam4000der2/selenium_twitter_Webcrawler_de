@@ -6,13 +6,14 @@ import logging
 import re
 import time
 import state_store
+from paths import DATA_FILE as DEFAULT_DATA_FILE, LOG_FILE
 
 # DATA_FILE = 'data.json'
-DATA_FILE = '/home/sascha/bots/data.json'
+DATA_FILE = DEFAULT_DATA_FILE
 
 # Configure logging
 logging.basicConfig(
-    filename='/home/sascha/bots/twitter_bot.log',
+    filename=LOG_FILE,
     level=logging.INFO,
     format='%(asctime)s %(levelname)s:%(message)s'
 )
