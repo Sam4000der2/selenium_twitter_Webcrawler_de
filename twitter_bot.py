@@ -21,6 +21,7 @@ from dateutil.parser import parse
 import pytz
 import requests  # Neuer Import für URL-Erweiterung
 import state_store
+from paths import LOG_FILE
 
 #print("Imports successful")
 
@@ -38,7 +39,7 @@ HISTORY_LIMIT = 100
 HISTORY_TRIM_TO = 50
 
 # Logging configuration
-logging.basicConfig(filename='/home/sascha/bots/twitter_bot.log', level=logging.WARNING, force=True)
+logging.basicConfig(filename=LOG_FILE, level=logging.WARNING, force=True)
 #print("Logging configured")
 
 # Set Firefox options

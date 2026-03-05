@@ -23,6 +23,7 @@ from gemini_helper import GeminiModelManager
 from mastodon_text_utils import split_mastodon_text, sanitize_for_mastodon
 import mastodon_post_store
 import state_store
+from paths import LOG_FILE
 
 GEMINI_KEY_ENV_VARS = [
     "GEMINI_API_KEY",
@@ -84,7 +85,7 @@ client = get_primary_gemini_client()
 gemini_manager = GeminiModelManager(client)
 
 # Configure logging
-LOG_PATH = '/home/sascha/bots/twitter_bot.log'
+LOG_PATH = LOG_FILE
 ALT_TEXT_LOG_PREFIX = "Alt-Text Generierung"
 GEMINI_HELPER_PREFIX = "gemini_helper"
 ALT_TEXT_FALLBACK = "Alt-Text konnte nicht automatisch generiert werden."

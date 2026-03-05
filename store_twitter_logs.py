@@ -3,8 +3,9 @@ import time
 from pathlib import Path
 
 from state_store import store_archive_logs
+from paths import LOG_FILE
 
-LOGFILE = Path("/home/sascha/bots/twitter_bot.log")
+LOGFILE = Path(LOG_FILE)
 
 def main():
     if not LOGFILE.exists():

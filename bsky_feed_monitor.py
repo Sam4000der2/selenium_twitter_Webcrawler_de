@@ -17,6 +17,7 @@ import pytz
 import telegram_bot
 import mastodon_bot
 import state_store
+from paths import LOG_FILE
 
 # -------------------------
 # Logging configuration
@@ -24,7 +25,7 @@ import state_store
 # Ursprünglich war level=logging.ERROR; fürs Debug/Info beim Start setze ich INFO.
 # Wenn du nur Fehler möchtest, ändere auf logging.ERROR.
 logging.basicConfig(
-    filename='/home/sascha/bots/twitter_bot.log',
+    filename=LOG_FILE,
     level=logging.INFO,
     format='%(asctime)s %(levelname)s %(message)s'
 )

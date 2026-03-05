@@ -4,11 +4,12 @@ import os
 import sqlite3
 import time
 from typing import Any, Dict, Iterable, Tuple
+from paths import DEFAULT_DB_PATH
 
 DB_PATH = (
     os.environ.get("NITTER_DB_PATH")
     or os.environ.get("MASTODON_POST_DB")
-    or "/home/sascha/bots/nitter_bot.db"
+    or DEFAULT_DB_PATH
 )
 
 _initialized = False
