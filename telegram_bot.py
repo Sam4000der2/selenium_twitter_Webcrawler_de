@@ -13,7 +13,7 @@ DATA_FILE = '/home/sascha/bots/data.json'
 # Configure logging
 logging.basicConfig(
     filename='/home/sascha/bots/twitter_bot.log',
-    level=logging.WARNING,
+    level=logging.INFO,
     format='%(asctime)s %(levelname)s:%(message)s'
 )
 
@@ -37,8 +37,49 @@ if admin is None:
 
 _X_LINK_PREFIX = re.compile(r"(?i)\bhttps?://x\.com")
 _X_LINK_BARE = re.compile(r"(?i)\bx\.com(?=/)")
+
+
+def _parse_retry_delays(raw: str | None, fallback: list[int]) -> list[int]:
+    tokens = re.split(r"[,\s;]+", (raw or "").strip())
+    parsed: list[int] = []
+    for token in tokens:
+        if not token:
+            continue
+        try:
+            value = int(token)
+        except ValueError:
+            continue
+        if value > 0:
+            parsed.append(value)
+    return parsed or list(fallback)
+
+
 RETRY_DELAYS_SECONDS = [60, 120, 180]
 MAX_EXTRA_SEND_RETRIES = len(RETRY_DELAYS_SECONDS)
+IMMEDIATE_SEND_RETRY_DELAYS_SECONDS = _parse_retry_delays(
+    os.environ.get("TELEGRAM_IMMEDIATE_SEND_RETRY_DELAYS_SECONDS"),
+    [5, 15],
+)
+
+
+def _is_retryable_send_error(error_text: str) -> bool:
+    msg = (error_text or "").lower()
+    retry_tokens = (
+        "timed out",
+        "timeout",
+        "service unavailable",
+        "temporary problem",
+        "temporarily unavailable",
+        "network",
+        "connection reset",
+        "connection aborted",
+        "gateway timeout",
+        "bad gateway",
+        "too many requests",
+        " 503",
+        "(503",
+    )
+    return any(token in msg for token in retry_tokens)
 
 
 def replace_x_links_with_nitter(text: str) -> str:
@@ -161,13 +202,29 @@ async def _process_pending_telegram_retries(bot):
 
 
 async def send_telegram_message(bot, chat_id, message):
-    try:
-        await bot.send_message(chat_id=chat_id, text=message)
-        return True, ""
-    except Exception as e:
-        err_txt = str(e)
-        logging.warning(f"telegram_bot: Fehler in def send_telegram_message (chat_id={chat_id}): {err_txt}")
-        return False, err_txt
+    total_attempts = 1 + len(IMMEDIATE_SEND_RETRY_DELAYS_SECONDS)
+    for attempt in range(1, total_attempts + 1):
+        try:
+            await bot.send_message(chat_id=chat_id, text=message)
+            if attempt > 1:
+                logging.info(
+                    f"telegram_bot: Nachricht nach Retry erfolgreich "
+                    f"(chat_id={chat_id}, versuch={attempt}/{total_attempts})."
+                )
+            return True, ""
+        except Exception as e:
+            err_txt = str(e)
+            if attempt <= len(IMMEDIATE_SEND_RETRY_DELAYS_SECONDS) and _is_retryable_send_error(err_txt):
+                delay = IMMEDIATE_SEND_RETRY_DELAYS_SECONDS[attempt - 1]
+                logging.warning(
+                    f"telegram_bot: Fehler in def send_telegram_message (chat_id={chat_id}, "
+                    f"versuch={attempt}/{total_attempts}), retry in {delay}s: {err_txt}"
+                )
+                await asyncio.sleep(delay)
+                continue
+            logging.warning(f"telegram_bot: Fehler in def send_telegram_message (chat_id={chat_id}): {err_txt}")
+            return False, err_txt
+    return False, "Unbekannter Sendefehler"
 
 
 async def send_telegram_picture(bot, chat_id, images):

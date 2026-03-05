@@ -1025,11 +1025,14 @@ async def main():
                     print(f"No-send: {len(new_tweets)} neue Items (DB aktualisiert, keine Auslieferung).")
                     for t in new_tweets:
                         print(json.dumps(t, ensure_ascii=False, indent=2))
-                else:
-                    try:
-                        await telegram_bot.main(new_tweets)
-                    except Exception as exc:
-                        logging.error(f"nitter_bot: Fehler in telegram_bot: {exc}")
+
+            if not args.debug and not args.no_send:
+                # Unabhängig von neuen/alten Einträgen fällige Telegram-Retry-Jobs bearbeiten.
+                telegram_batch = new_tweets if new_tweets else []
+                try:
+                    await telegram_bot.main(telegram_batch)
+                except Exception as exc:
+                    logging.error(f"nitter_bot: Fehler in telegram_bot (retry-loop): {exc}")
 
             if not args.debug and not args.no_send:
                 # Unabhängig von neuen/alten Einträgen fällige Mastodon-Retry-Jobs bearbeiten.

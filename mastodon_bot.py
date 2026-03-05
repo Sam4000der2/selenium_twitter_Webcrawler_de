@@ -98,7 +98,7 @@ QUOTE_POLICY_DISABLED_VALUES = {"disabled", "deny", "disallow"}
 
 logging.basicConfig(
     filename=LOG_PATH,
-    level=logging.WARNING,
+    level=logging.INFO,
     format='%(asctime)s %(levelname)s:%(message)s',
     force=True,
 )
@@ -206,6 +206,11 @@ IMAGE_DOWNLOAD_RETRY_DELAYS_SECONDS = _parse_retry_delays(
     os.environ.get("MASTODON_IMAGE_DOWNLOAD_RETRY_DELAYS_SECONDS"),
     SEND_RETRY_DELAYS_SECONDS,
 )
+IMMEDIATE_SEND_RETRY_DELAYS_SECONDS = _parse_retry_delays(
+    os.environ.get("MASTODON_IMMEDIATE_SEND_RETRY_DELAYS_SECONDS")
+    or os.environ.get("MASTODON_MEDIA_UPLOAD_RETRY_DELAYS_SECONDS"),
+    [5, 15],
+)
 IMAGE_DOWNLOAD_RETRY_NITTER_HOSTS = _parse_host_set(
     os.environ.get("MASTODON_IMAGE_DOWNLOAD_RETRY_NITTER_HOSTS"),
     DEFAULT_NITTER_IMAGE_RETRY_HOSTS,
@@ -235,6 +240,26 @@ def _should_retry_image_download(url: str) -> bool:
 def _is_max_retries_exceeded_error(error_text: str) -> bool:
     msg = (error_text or "").lower()
     return "max retries exceeded with url" in msg
+
+
+def _is_retryable_send_error(error_text: str) -> bool:
+    msg = (error_text or "").lower()
+    retry_tokens = (
+        "service unavailable",
+        "temporary problem",
+        "timed out",
+        "timeout",
+        "temporarily unavailable",
+        "network",
+        "connection reset",
+        "connection aborted",
+        "gateway timeout",
+        "bad gateway",
+        "too many requests",
+        " 503",
+        "(503",
+    )
+    return any(token in msg for token in retry_tokens)
 
 
 def _pause_instance_if_needed(instance_name: str, error_text: str, *, source: str) -> bool:
@@ -898,6 +923,93 @@ def _status_post_with_quote_support(
     )
 
 
+def _resolve_visibility(instance_name: str, username: str) -> str | None:
+    if instance_name == "opnv_berlin":
+        return "public" if any(sub in username for sub in opnv_berlin) else "unlisted"
+    if instance_name == "opnv_toot":
+        return "public" if any(sub in username for sub in opnv_toot) else "unlisted"
+    if instance_name == "opnv_mastodon":
+        return "public" if any(sub in username for sub in opnv_mastodon) else "unlisted"
+    return None
+
+
+async def _send_mastodon_status_with_retry(
+    *,
+    mastodon,
+    message: str,
+    visibility: str,
+    instance_name: str,
+    source_label: str,
+    quote_context: str,
+    in_reply_to_id=None,
+    media_ids: list | None = None,
+    quoted_status_id: str | None = None,
+):
+    total_attempts = 1 + len(IMMEDIATE_SEND_RETRY_DELAYS_SECONDS)
+    for attempt in range(1, total_attempts + 1):
+        try:
+            if quoted_status_id:
+                status_obj = await asyncio.to_thread(
+                    _status_post_with_quote_support,
+                    mastodon=mastodon,
+                    message=message,
+                    visibility=visibility,
+                    in_reply_to_id=in_reply_to_id,
+                    media_ids=media_ids,
+                    quoted_status_id=quoted_status_id,
+                )
+            else:
+                kwargs: dict[str, Any] = {
+                    "visibility": visibility,
+                    "in_reply_to_id": in_reply_to_id,
+                }
+                if media_ids:
+                    kwargs["media_ids"] = media_ids
+                status_obj = await asyncio.to_thread(
+                    mastodon.status_post,
+                    message,
+                    **kwargs,
+                )
+
+            if attempt > 1:
+                logging.info(
+                    f"mastodon_bot: Status-Post nach Retry erfolgreich "
+                    f"(instanz={instance_name}, versuch={attempt}/{total_attempts})."
+                )
+            return status_obj
+        except Exception as e:
+            if _is_quote_feature_error(e):
+                _mark_quote_feature_unsupported(instance_name, str(e))
+                logging.warning(
+                    f"mastodon_bot: Quote-API fehlt auf {instance_name}, poste ohne offizielle Quote {quote_context}."
+                )
+                return None
+
+            err_txt = str(e)
+            _pause_instance_if_needed(instance_name, err_txt, source=f"{source_label}.status_post")
+            can_retry = (
+                attempt <= len(IMMEDIATE_SEND_RETRY_DELAYS_SECONDS)
+                and _is_retryable_send_error(err_txt)
+            )
+            if can_retry:
+                delay = IMMEDIATE_SEND_RETRY_DELAYS_SECONDS[attempt - 1]
+                logging.warning(
+                    f"mastodon_bot: Fehler beim Status-Post "
+                    f"(instanz={instance_name}, versuch={attempt}/{total_attempts}), "
+                    f"retry in {delay}s: {err_txt}"
+                )
+                await asyncio.sleep(delay)
+                continue
+
+            logging.error(
+                f"mastodon_bot: Fehler beim Posten auf {instance_name} "
+                f"(quelle={source_label}): {err_txt}"
+            )
+            return None
+
+    return None
+
+
 async def post_tweet(
     mastodon,
     message,
@@ -906,43 +1018,21 @@ async def post_tweet(
     in_reply_to_id=None,
     quoted_status_id: str | None = None,
 ):
-    try:
-        if instance_name == "opnv_berlin":
-            visibility = 'public' if any(sub in username for sub in opnv_berlin) else 'unlisted'
-        elif instance_name == "opnv_toot":
-            visibility = 'public' if any(sub in username for sub in opnv_toot) else 'unlisted'
-        elif instance_name == "opnv_mastodon":
-            visibility = 'public' if any(sub in username for sub in opnv_mastodon) else 'unlisted'
-        else:
-            logging.error("Instanz nicht gefunden")
-            return None
-        if quoted_status_id:
-            return await asyncio.to_thread(
-                _status_post_with_quote_support,
-                mastodon=mastodon,
-                message=message,
-                visibility=visibility,
-                in_reply_to_id=in_reply_to_id,
-                media_ids=None,
-                quoted_status_id=quoted_status_id,
-            )
-
-        return await asyncio.to_thread(
-            mastodon.status_post,
-            message,
-            visibility=visibility,
-            in_reply_to_id=in_reply_to_id
-        )
-    except Exception as e:
-        if _is_quote_feature_error(e):
-            _mark_quote_feature_unsupported(instance_name, str(e))
-            logging.warning(
-                f"mastodon_bot: Quote-API fehlt auf {instance_name}, poste ohne offizielle Quote (text-only)."
-            )
-            return None
-        _pause_instance_if_needed(instance_name, str(e), source="post_tweet")
-        logging.error(f"mastodon_bot: Fehler beim Posten auf {instance_name}: {e}")
+    visibility = _resolve_visibility(instance_name, username)
+    if visibility is None:
+        logging.error("mastodon_bot: Instanz nicht gefunden")
         return None
+    return await _send_mastodon_status_with_retry(
+        mastodon=mastodon,
+        message=message,
+        visibility=visibility,
+        instance_name=instance_name,
+        source_label="post_tweet",
+        quote_context="(text-only)",
+        in_reply_to_id=in_reply_to_id,
+        media_ids=None,
+        quoted_status_id=quoted_status_id,
+    )
 
 
 def extract_hashtags(content, username):
@@ -1314,20 +1404,44 @@ async def upload_media_payloads(mastodon, media_payloads, instance_name: str | N
         return media_ids
 
     for payload in media_payloads:
-        try:
-            mime = payload.get("mime_type") or "image/jpeg"
-            desc = payload.get("alt_text") or ""
-            media_info = await asyncio.to_thread(
-                mastodon.media_post,
-                io.BytesIO(payload.get("bytes") or b""),
-                description=desc,
-                mime_type=mime
-            )
-            media_ids.append(media_info['id'])
-        except Exception as e:
-            if instance_name:
-                _pause_instance_if_needed(instance_name, str(e), source="upload_media_payloads.media_post")
-            logging.error(f"mastodon_bot: Fehler beim Media-Post: {e}")
+        mime = payload.get("mime_type") or "image/jpeg"
+        desc = payload.get("alt_text") or ""
+        total_attempts = 1 + len(IMMEDIATE_SEND_RETRY_DELAYS_SECONDS)
+
+        for attempt in range(1, total_attempts + 1):
+            try:
+                media_info = await asyncio.to_thread(
+                    mastodon.media_post,
+                    io.BytesIO(payload.get("bytes") or b""),
+                    description=desc,
+                    mime_type=mime
+                )
+                media_ids.append(media_info['id'])
+                if attempt > 1:
+                    logging.info(
+                        "mastodon_bot: Media-Upload nach Retry erfolgreich "
+                        f"(versuch={attempt}/{total_attempts}, instanz={instance_name or 'unknown'})"
+                    )
+                break
+            except Exception as e:
+                err_txt = str(e)
+                if instance_name:
+                    _pause_instance_if_needed(instance_name, err_txt, source="upload_media_payloads.media_post")
+                can_retry = (
+                    attempt <= len(IMMEDIATE_SEND_RETRY_DELAYS_SECONDS)
+                    and _is_retryable_send_error(err_txt)
+                )
+                if can_retry:
+                    delay = IMMEDIATE_SEND_RETRY_DELAYS_SECONDS[attempt - 1]
+                    logging.warning(
+                        "mastodon_bot: Fehler beim Media-Post "
+                        f"(instanz={instance_name or 'unknown'}, versuch={attempt}/{total_attempts}), "
+                        f"retry in {delay}s: {err_txt}"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logging.error(f"mastodon_bot: Fehler beim Media-Post: {err_txt}")
+                break
     if not media_ids:
         logging.error("mastodon_bot: Keine Medien konnten hochgeladen werden (0/{}).".format(len(media_payloads)))
     elif len(media_ids) < len(media_payloads):
@@ -1362,46 +1476,21 @@ async def post_tweet_with_media(
         logging.error("mastodon_bot: Medien-Upload fehlgeschlagen, breche Posting ab.")
         return None
 
-    try:
-        if instance_name == "opnv_berlin":
-            visibility = 'public' if any(sub in username for sub in opnv_berlin) else 'unlisted'
-        elif instance_name == "opnv_toot":
-            visibility = 'public' if any(sub in username for sub in opnv_toot) else 'unlisted'
-        elif instance_name == "opnv_mastodon":
-            visibility = 'public' if any(sub in username for sub in opnv_mastodon) else 'unlisted'
-        else:
-            logging.error("mastodon_bot: Instanz nicht gefunden")
-            return
-
-        if quoted_status_id:
-            return await asyncio.to_thread(
-                _status_post_with_quote_support,
-                mastodon=mastodon,
-                message=message,
-                visibility=visibility,
-                in_reply_to_id=in_reply_to_id,
-                media_ids=media_ids,
-                quoted_status_id=quoted_status_id,
-            )
-
-        return await asyncio.to_thread(
-            mastodon.status_post,
-            message,
-            media_ids=media_ids,
-            visibility=visibility,
-            in_reply_to_id=in_reply_to_id
-        )
-
-    except Exception as e:
-        if _is_quote_feature_error(e):
-            _mark_quote_feature_unsupported(instance_name, str(e))
-            logging.warning(
-                f"mastodon_bot: Quote-API fehlt auf {instance_name}, poste ohne offizielle Quote (media)."
-            )
-            return None
-        _pause_instance_if_needed(instance_name, str(e), source="post_tweet_with_media.status_post")
-        logging.error(f"mastodon_bot: Allgemeiner Fehler beim Posten mit Bildern: {e}")
+    visibility = _resolve_visibility(instance_name, username)
+    if visibility is None:
+        logging.error("mastodon_bot: Instanz nicht gefunden")
         return None
+    return await _send_mastodon_status_with_retry(
+        mastodon=mastodon,
+        message=message,
+        visibility=visibility,
+        instance_name=instance_name,
+        source_label="post_tweet_with_media",
+        quote_context="(media)",
+        in_reply_to_id=in_reply_to_id,
+        media_ids=media_ids,
+        quoted_status_id=quoted_status_id,
+    )
 
 
 async def post_tweet_with_images_legacy(
@@ -1438,45 +1527,21 @@ async def post_tweet_with_images_legacy(
         logging.error("mastodon_bot: Fallback-Medien-Upload fehlgeschlagen, breche Posting ab.")
         return None
 
-    try:
-        if instance_name == "opnv_berlin":
-            visibility = 'public' if any(sub in username for sub in opnv_berlin) else 'unlisted'
-        elif instance_name == "opnv_toot":
-            visibility = 'public' if any(sub in username for sub in opnv_toot) else 'unlisted'
-        elif instance_name == "opnv_mastodon":
-            visibility = 'public' if any(sub in username for sub in opnv_mastodon) else 'unlisted'
-        else:
-            logging.error("mastodon_bot: Instanz nicht gefunden")
-            return
-
-        if quoted_status_id:
-            return await asyncio.to_thread(
-                _status_post_with_quote_support,
-                mastodon=mastodon,
-                message=message,
-                visibility=visibility,
-                in_reply_to_id=in_reply_to_id,
-                media_ids=media_ids,
-                quoted_status_id=quoted_status_id,
-            )
-
-        return await asyncio.to_thread(
-            mastodon.status_post,
-            message,
-            media_ids=media_ids,
-            visibility=visibility,
-            in_reply_to_id=in_reply_to_id
-        )
-    except Exception as e:
-        if _is_quote_feature_error(e):
-            _mark_quote_feature_unsupported(instance_name, str(e))
-            logging.warning(
-                f"mastodon_bot: Quote-API fehlt auf {instance_name}, poste ohne offizielle Quote (legacy media)."
-            )
-            return None
-        _pause_instance_if_needed(instance_name, str(e), source="post_tweet_with_images_legacy.status_post")
-        logging.error(f"mastodon_bot: Fallback-Fehler beim Posten mit Bildern: {e}")
+    visibility = _resolve_visibility(instance_name, username)
+    if visibility is None:
+        logging.error("mastodon_bot: Instanz nicht gefunden")
         return None
+    return await _send_mastodon_status_with_retry(
+        mastodon=mastodon,
+        message=message,
+        visibility=visibility,
+        instance_name=instance_name,
+        source_label="post_tweet_with_images_legacy",
+        quote_context="(legacy media)",
+        in_reply_to_id=in_reply_to_id,
+        media_ids=media_ids,
+        quoted_status_id=quoted_status_id,
+    )
 
 
 async def _post_with_media_fallbacks(
