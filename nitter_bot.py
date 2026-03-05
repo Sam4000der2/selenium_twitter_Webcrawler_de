@@ -1016,26 +1016,31 @@ async def main():
             if history_changed and persist_history:
                 history_map = save_history(history_map, per_user_limits)
 
-            if new_items:
-                new_tweets = build_tweet_payloads(new_items)
-                if new_tweets:
-                    if args.debug:
-                        for t in new_tweets:
-                            print(json.dumps(t, ensure_ascii=False, indent=2))
-                    elif args.no_send:
-                        print(f"No-send: {len(new_tweets)} neue Items (DB aktualisiert, keine Auslieferung).")
-                        for t in new_tweets:
-                            print(json.dumps(t, ensure_ascii=False, indent=2))
-                    else:
-                        try:
-                            await telegram_bot.main(new_tweets)
-                        except Exception as exc:
-                            logging.error(f"nitter_bot: Fehler in telegram_bot: {exc}")
+            new_tweets = build_tweet_payloads(new_items) if new_items else []
+            if new_tweets:
+                if args.debug:
+                    for t in new_tweets:
+                        print(json.dumps(t, ensure_ascii=False, indent=2))
+                elif args.no_send:
+                    print(f"No-send: {len(new_tweets)} neue Items (DB aktualisiert, keine Auslieferung).")
+                    for t in new_tweets:
+                        print(json.dumps(t, ensure_ascii=False, indent=2))
+                else:
+                    try:
+                        await telegram_bot.main(new_tweets)
+                    except Exception as exc:
+                        logging.error(f"nitter_bot: Fehler in telegram_bot: {exc}")
 
-                        try:
-                            await mastodon_bot.main(new_tweets)
-                        except Exception as exc:
-                            logging.error(f"nitter_bot: Fehler in mastodon_bot: {exc}")
+                    try:
+                        await mastodon_bot.main(new_tweets)
+                    except Exception as exc:
+                        logging.error(f"nitter_bot: Fehler in mastodon_bot: {exc}")
+            elif not args.debug and not args.no_send:
+                # Auch ohne neue Items fällige Mastodon-Retry-Jobs bearbeiten.
+                try:
+                    await mastodon_bot.main([])
+                except Exception as exc:
+                    logging.error(f"nitter_bot: Fehler in mastodon_bot (retry-loop): {exc}")
 
         except Exception as exc:
             logging.error(f"nitter_bot: Unerwarteter Fehler: {exc}")

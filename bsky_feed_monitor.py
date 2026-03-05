@@ -307,17 +307,16 @@ def check_all_feeds(debug: bool = False):
 
 async def main():
     while True:
-        new_tweets = check_all_feeds()
+        new_tweets = check_all_feeds() or []
         if new_tweets:
             try:
                 await telegram_bot.main(new_tweets)
             except Exception as e:
                 logging.error(f"bsky_bot: An error occurred in telegram_bot: {e}")
-
-            try:
-                await mastodon_bot.main(new_tweets)
-            except Exception as e:
-                logging.error(f"bsky_bot: An error occurred in mastodon_bot: {e}")
+        try:
+            await mastodon_bot.main(new_tweets)
+        except Exception as e:
+            logging.error(f"bsky_bot: An error occurred in mastodon_bot: {e}")
         await asyncio.sleep(60)
 
 def run_debug():

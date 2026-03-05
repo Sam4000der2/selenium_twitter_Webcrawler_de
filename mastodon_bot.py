@@ -1738,7 +1738,7 @@ async def _process_pending_mastodon_retries(clients: list[tuple[str, Any]]):
             continue
 
         state_store.remove_failed_delivery(delivery_id)
-        logging.info(f"mastodon_bot: Retry-Job {delivery_id} erfolgreich (instanz={instance_name}).")
+        logging.warning(f"mastodon_bot: Retry-Job {delivery_id} erfolgreich (instanz={instance_name}).")
 
         if idx == 0 and status_id_raw:
             try:
