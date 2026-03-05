@@ -1031,14 +1031,11 @@ async def main():
                     except Exception as exc:
                         logging.error(f"nitter_bot: Fehler in telegram_bot: {exc}")
 
-                    try:
-                        await mastodon_bot.main(new_tweets)
-                    except Exception as exc:
-                        logging.error(f"nitter_bot: Fehler in mastodon_bot: {exc}")
-            elif not args.debug and not args.no_send:
-                # Auch ohne neue Items fällige Mastodon-Retry-Jobs bearbeiten.
+            if not args.debug and not args.no_send:
+                # Unabhängig von neuen/alten Einträgen fällige Mastodon-Retry-Jobs bearbeiten.
+                mastodon_batch = new_tweets if new_tweets else []
                 try:
-                    await mastodon_bot.main([])
+                    await mastodon_bot.main(mastodon_batch)
                 except Exception as exc:
                     logging.error(f"nitter_bot: Fehler in mastodon_bot (retry-loop): {exc}")
 
