@@ -8,7 +8,7 @@ import shutil
 import asyncio
 import logging
 from typing import Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.firefox.service import Service as FirefoxService
@@ -21,6 +21,7 @@ from dateutil.parser import parse
 import pytz
 import requests  # Neuer Import für URL-Erweiterung
 import state_store
+from url_safety import validate_outbound_url
 
 #print("Imports successful")
 
@@ -67,38 +68,96 @@ def expand_short_urls(urls):
     expanded_urls = []
     seen: set[str] = set()
     headers = {"User-Agent": "Mozilla/5.0 (compatible; bot/1.0)"}
+    redirect_statuses = {301, 302, 303, 307, 308}
+    max_redirects = 5
     for raw in urls:
         url = normalize_url(raw)
         if not url or url in seen:
             continue
         seen.add(url)
+        is_safe_url, reason = validate_outbound_url(url, allowed_schemes=("https",))
+        if not is_safe_url:
+            logging.warning(f"twitter_bot: URL aus Sicherheitsgründen verworfen ({reason}): {url}")
+            continue
+
+        current_url = url
+        use_get = False
         response = None
+        is_blocked_redirect = False
+        final_status = None
         try:
-            response = requests.head(url, allow_redirects=True, timeout=5, headers=headers)
-            status_ok = response is not None and 200 <= response.status_code < 400
-            status_code = getattr(response, "status_code", None)
-
-            # Manche Server liefern auf HEAD 400/405 etc.; dann auf GET ausweichen (ausgenommen 429).
-            should_retry_get = (not status_ok) and status_code not in (429,)
-            if ("dlvr.it" in url.lower()) and not status_ok:
-                should_retry_get = True
-
-            if should_retry_get:
+            for _ in range(max_redirects + 1):
                 if response is not None:
                     response.close()
-                response = requests.get(
-                    url, allow_redirects=True, timeout=8, headers=headers, stream=True
-                )
-                status_ok = response is not None and 200 <= response.status_code < 400
+                    response = None
 
-            if status_ok and response is not None:
-                expanded_urls.append(response.url)
+                if use_get:
+                    response = requests.get(
+                        current_url,
+                        allow_redirects=False,
+                        timeout=8,
+                        headers=headers,
+                        stream=True,
+                    )
+                else:
+                    response = requests.head(
+                        current_url,
+                        allow_redirects=False,
+                        timeout=5,
+                        headers=headers,
+                    )
+
+                final_status = getattr(response, "status_code", None)
+                status_code = final_status if isinstance(final_status, int) else None
+                if status_code in redirect_statuses:
+                    location = (response.headers.get("Location") or "").strip()
+                    if not location:
+                        final_status = "redirect-without-location"
+                        break
+                    next_url = normalize_url(urljoin(current_url, location))
+                    is_safe_next, next_reason = validate_outbound_url(
+                        next_url,
+                        allowed_schemes=("https",),
+                    )
+                    if not is_safe_next:
+                        logging.warning(
+                            f"twitter_bot: Redirect-Ziel aus Sicherheitsgründen verworfen "
+                            f"({next_reason}): {next_url}"
+                        )
+                        is_blocked_redirect = True
+                        break
+                    current_url = next_url
+                    use_get = False
+                    continue
+
+                status_ok = isinstance(status_code, int) and 200 <= status_code < 400
+                should_retry_get = (
+                    (not status_ok)
+                    and (not use_get)
+                    and (status_code not in (429,))
+                )
+                if should_retry_get:
+                    use_get = True
+                    continue
+
+                if status_ok:
+                    expanded_urls.append(current_url)
+                break
+
             else:
-                status_code = getattr(response, "status_code", "unknown")
+                final_status = "too-many-redirects"
+
+            if is_blocked_redirect:
+                continue
+
+            is_valid_result = isinstance(final_status, int) and 200 <= final_status < 400
+            if not is_valid_result:
                 log_fn = logging.warning
-                if isinstance(status_code, int) and status_code >= 500:
+                if isinstance(final_status, int) and final_status >= 500:
                     log_fn = logging.error
-                log_fn(f"twitter_bot: Überprüfung URL {url} liefert ungültigen Status {status_code}")
+                log_fn(
+                    f"twitter_bot: Überprüfung URL {url} liefert ungültigen Status {final_status}"
+                )
         except Exception as ex:
             logging.error(f"twitter_bot: Fehler beim Überprüfen der URL {url}: {ex}")
         finally:
@@ -119,11 +178,15 @@ def normalize_url(url: str) -> str:
     cleaned = (url or "").strip()
     cleaned = cleaned.strip(".,;:!?()[]{}<>\"'…")
     cleaned = cleaned.replace("%E2%80%A6", "")
+    cleaned = re.sub(r"^https:/(?!/)", "https://", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^http:/(?!/)", "http://", cleaned, flags=re.IGNORECASE)
     if not cleaned:
         return ""
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", cleaned):
         cleaned = cleaned.lstrip("/")
         cleaned = f"https://{cleaned}"
+    if cleaned.startswith("http://"):
+        cleaned = "https://" + cleaned[len("http://") :]
     return cleaned
 
 

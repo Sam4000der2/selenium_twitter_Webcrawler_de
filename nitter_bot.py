@@ -9,7 +9,7 @@ import os
 import re
 import time
 from datetime import datetime, timedelta, time as dtime
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import feedparser
 from dateutil.parser import parse
@@ -19,6 +19,7 @@ import requests
 import telegram_bot
 import mastodon_bot
 import state_store
+from url_safety import validate_outbound_url
 
 BASE_DIR = os.environ.get("BOTS_BASE_DIR", "/home/sascha/bots")
 LOG_PATH = os.path.join(BASE_DIR, "twitter_bot.log")
@@ -362,38 +363,95 @@ def expand_short_urls(urls: list[str]) -> list[str]:
     expanded_urls = []
     seen: set[str] = set()
     headers = {"User-Agent": "Mozilla/5.0 (compatible; nitter-bot/1.0)"}
+    redirect_statuses = {301, 302, 303, 307, 308}
+    max_redirects = 5
     for raw in urls:
         url = normalize_url(raw)
         if not url or url in seen:
             continue
         seen.add(url)
+        is_safe_url, reason = validate_outbound_url(url, allowed_schemes=("https",))
+        if not is_safe_url:
+            logging.warning(f"nitter_bot: URL aus Sicherheitsgründen verworfen ({reason}): {url}")
+            continue
         response = None
+        current_url = url
+        use_get = False
+        is_blocked_redirect = False
+        final_status = None
         try:
-            response = requests.head(url, allow_redirects=True, timeout=5, headers=headers)
-            status_ok = response is not None and 200 <= response.status_code < 400
-            status_code = getattr(response, "status_code", None)
-
-            # Einige Server liefern bei HEAD (z. B. 400/405) falsche Fehler; dann auf GET ausweichen.
-            should_retry_get = (not status_ok) and status_code not in (429,)
-            if ("dlvr.it" in url.lower()) and not status_ok:
-                should_retry_get = True
-
-            if should_retry_get:
+            for _ in range(max_redirects + 1):
                 if response is not None:
                     response.close()
-                response = requests.get(
-                    url, allow_redirects=True, timeout=8, headers=headers, stream=True
-                )
-                status_ok = response is not None and 200 <= response.status_code < 400
+                    response = None
 
-            if status_ok and response is not None:
-                expanded_urls.append(response.url)
+                if use_get:
+                    response = requests.get(
+                        current_url,
+                        allow_redirects=False,
+                        timeout=8,
+                        headers=headers,
+                        stream=True,
+                    )
+                else:
+                    response = requests.head(
+                        current_url,
+                        allow_redirects=False,
+                        timeout=5,
+                        headers=headers,
+                    )
+
+                final_status = getattr(response, "status_code", None)
+                status_code = final_status if isinstance(final_status, int) else None
+                if status_code in redirect_statuses:
+                    location = (response.headers.get("Location") or "").strip()
+                    if not location:
+                        final_status = "redirect-without-location"
+                        break
+                    next_url = normalize_url(urljoin(current_url, location))
+                    is_safe_next, next_reason = validate_outbound_url(
+                        next_url,
+                        allowed_schemes=("https",),
+                    )
+                    if not is_safe_next:
+                        logging.warning(
+                            f"nitter_bot: Redirect-Ziel aus Sicherheitsgründen verworfen "
+                            f"({next_reason}): {next_url}"
+                        )
+                        is_blocked_redirect = True
+                        break
+                    current_url = next_url
+                    use_get = False
+                    continue
+
+                status_ok = isinstance(status_code, int) and 200 <= status_code < 400
+                should_retry_get = (
+                    (not status_ok)
+                    and (not use_get)
+                    and (status_code not in (429,))
+                )
+                if should_retry_get:
+                    use_get = True
+                    continue
+
+                if status_ok:
+                    expanded_urls.append(current_url)
+                break
+
             else:
-                status_code = getattr(response, "status_code", "unknown")
+                final_status = "too-many-redirects"
+
+            if is_blocked_redirect:
+                continue
+
+            is_valid_result = isinstance(final_status, int) and 200 <= final_status < 400
+            if not is_valid_result:
                 log_fn = logging.warning
-                if isinstance(status_code, int) and status_code >= 500:
+                if isinstance(final_status, int) and final_status >= 500:
                     log_fn = logging.error
-                log_fn(f"nitter_bot: Überprüfung URL {url} liefert ungültigen Status {status_code}")
+                log_fn(
+                    f"nitter_bot: Überprüfung URL {url} liefert ungültigen Status {final_status}"
+                )
         except Exception as ex:
             logging.error(f"nitter_bot: Fehler beim Überprüfen der URL {url}: {ex}")
         finally:
