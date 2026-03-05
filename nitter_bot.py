@@ -9,7 +9,7 @@ import os
 import re
 import time
 from datetime import datetime, timedelta, time as dtime
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import feedparser
 from dateutil.parser import parse
@@ -336,6 +336,27 @@ def normalize_url(url: str) -> str:
     return cleaned
 
 
+def absolutize_feed_url(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("//"):
+        return f"https:{raw}"
+    parsed = urlparse(raw)
+    if parsed.scheme:
+        return raw
+    return urljoin(f"{NITTER_BASE_URL}/", raw.lstrip("/"))
+
+
+def normalize_media_source_url(url: str) -> str:
+    cleaned = (url or "").strip()
+    cleaned = cleaned.strip(".,;:!?()[]{}<>\"'…")
+    cleaned = cleaned.replace("%E2%80%A6", "")
+    cleaned = re.sub(r"^https:/(?!/)", "https://", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^http:/(?!/)", "http://", cleaned, flags=re.IGNORECASE)
+    return absolutize_feed_url(cleaned)
+
+
 def replace_with_invidious(url: str) -> str:
     """
     Optional: ersetzt youtube.com durch konfigurierten Invidious-Host, falls gesetzt.
@@ -609,6 +630,24 @@ def extract_urls_from_text(text: str):
     return dedupe_preserve_order(urls)
 
 
+def is_safe_media_source(url: str) -> tuple[bool, str]:
+    candidate = (url or "").strip()
+    if not candidate:
+        return False, "empty-url"
+    try:
+        parsed = urlparse(candidate)
+    except Exception:
+        return False, "invalid-url"
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in {"https", "http"}:
+        return False, f"scheme-not-allowed:{scheme}"
+    if not (parsed.hostname or "").strip():
+        return False, "missing-host"
+    if parsed.username or parsed.password:
+        return False, "userinfo-not-allowed"
+    return True, "ok"
+
+
 def parse_summary(summary: str):
     text = html_to_text(summary)
     images = []
@@ -616,20 +655,36 @@ def parse_summary(summary: str):
     extern_urls = []
 
     for href in re.findall(r'href="([^"]+)"', summary or ""):
-        if not href or is_internal_url(href):
+        if not href:
             continue
-        if href.lower().endswith((".mp4", ".m3u8")):
-            videos.append(href)
+        normalized_href = normalize_media_source_url(href)
+        if not normalized_href or is_internal_url(normalized_href):
+            continue
+        is_safe, reason = is_safe_media_source(normalized_href)
+        if not is_safe:
+            logging.warning(
+                f"nitter_bot: Verwerfe unsichere href-URL ({reason}): {href}"
+            )
+            continue
+        if normalized_href.lower().endswith((".mp4", ".m3u8")):
+            videos.append(normalized_href)
         else:
-            extern_urls.append(href)
+            extern_urls.append(normalized_href)
 
     for src in re.findall(r'src="([^"]+)"', summary or ""):
         if not src:
             continue
-        if src.lower().endswith((".mp4", ".m3u8")):
-            videos.append(add_port_if_local(src))
+        normalized_src = normalize_media_source_url(add_port_if_local(src))
+        is_safe, reason = is_safe_media_source(normalized_src)
+        if not is_safe:
+            logging.warning(
+                f"nitter_bot: Verwerfe unsichere src-URL ({reason}): {src}"
+            )
+            continue
+        if normalized_src.lower().endswith((".mp4", ".m3u8")):
+            videos.append(normalized_src)
         else:
-            images.append(add_port_if_local(src))
+            images.append(normalized_src)
 
     return (
         text,

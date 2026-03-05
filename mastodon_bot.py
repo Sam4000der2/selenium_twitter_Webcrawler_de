@@ -2,9 +2,11 @@ import asyncio
 import os
 import re
 import logging
+import ipaddress
+import socket
 from threading import Lock
 from datetime import date, datetime, time, timedelta
-from urllib.parse import urlparse
+from urllib.parse import unquote, urljoin, urlparse
 from zoneinfo import ZoneInfo
 from typing import Any
 from PIL import Image
@@ -14,7 +16,6 @@ import json
 import time as time_module
 
 import aiohttp
-import aiofiles
 
 from mastodon import Mastodon
 from google import genai
@@ -172,7 +173,14 @@ MASTODON_FIRST_POST_MIN_CONTENT_LEN = int(os.environ.get("MASTODON_FIRST_POST_MI
 SEND_RETRY_DELAYS_SECONDS = [60, 120, 180]
 SEND_MAX_EXTRA_RETRIES = len(SEND_RETRY_DELAYS_SECONDS)
 INSTANCE_PAUSE_SECONDS = 15 * 60
-DEFAULT_NITTER_IMAGE_RETRY_HOSTS = {"localhost", "127.0.0.1", "nitter.nuc.lan"}
+# Öffentliche Standard-Hosts für Retry-Erkennung; private Hosts können
+# bei Bedarf explizit per ENV ergänzt werden.
+DEFAULT_NITTER_IMAGE_RETRY_HOSTS = {"nitter.net", "www.nitter.net"}
+MEDIA_BLOCKED_HOSTS = {"localhost", "localhost.localdomain"}
+MEDIA_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+MEDIA_MAX_REDIRECTS = int(os.environ.get("MASTODON_MEDIA_MAX_REDIRECTS", "5"))
+_MEDIA_TRUSTED_ORIGINS_RAW = os.environ.get("MASTODON_MEDIA_TRUSTED_ORIGINS")
+_MEDIA_TRUSTED_HTTP_ORIGINS_RAW = os.environ.get("MASTODON_MEDIA_TRUSTED_HTTP_ORIGINS")
 
 
 def _parse_retry_delays(raw: str | None, fallback: list[int]) -> list[int]:
@@ -194,6 +202,36 @@ def _parse_host_set(raw: str | None, fallback: set[str]) -> set[str]:
     tokens = re.split(r"[,\s;]+", (raw or "").strip().lower())
     hosts = {token for token in tokens if token}
     return hosts or set(fallback)
+
+
+def _normalize_origin(url_or_origin: str) -> str:
+    parsed = urlparse((url_or_origin or "").strip())
+    scheme = (parsed.scheme or "").lower()
+    host = (parsed.hostname or "").strip().lower()
+    if scheme not in {"http", "https"} or not host:
+        return ""
+    try:
+        port = parsed.port
+    except ValueError:
+        return ""
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    return f"{scheme}://{host}:{port}"
+
+
+def _parse_origin_set(raw: str | None, fallback: set[str]) -> set[str]:
+    tokens = re.split(r"[,\s;]+", (raw or "").strip())
+    parsed = {_normalize_origin(token) for token in tokens if token}
+    cleaned = {origin for origin in parsed if origin}
+    return cleaned or set(fallback)
+
+
+_default_origin = _normalize_origin((os.environ.get("NITTER_BASE_URL") or "http://localhost:8081").strip())
+_default_https_origins = {_default_origin} if _default_origin.startswith("https://") else set()
+_default_http_origins = {_default_origin} if _default_origin.startswith("http://") else set()
+
+MEDIA_TRUSTED_ORIGINS = _parse_origin_set(_MEDIA_TRUSTED_ORIGINS_RAW, _default_https_origins)
+MEDIA_TRUSTED_HTTP_ORIGINS = _parse_origin_set(_MEDIA_TRUSTED_HTTP_ORIGINS_RAW, _default_http_origins)
 
 
 IMAGE_DOWNLOAD_RETRY_ENABLED = os.environ.get(
@@ -227,6 +265,84 @@ def _is_nitter_pic_url(url: str) -> bool:
     if not host or "/pic/" not in path:
         return False
     return host in IMAGE_DOWNLOAD_RETRY_NITTER_HOSTS
+
+
+def _is_blocked_ip(ip_text: str) -> bool:
+    try:
+        ip_obj = ipaddress.ip_address(ip_text)
+    except ValueError:
+        return False
+    return any(
+        (
+            ip_obj.is_private,
+            ip_obj.is_loopback,
+            ip_obj.is_link_local,
+            ip_obj.is_multicast,
+            ip_obj.is_reserved,
+            ip_obj.is_unspecified,
+        )
+    )
+
+
+def _is_trusted_media_url(parsed_url) -> tuple[bool, bool]:
+    origin = _normalize_origin(parsed_url.geturl())
+    path = parsed_url.path or ""
+    if origin not in MEDIA_TRUSTED_ORIGINS and origin not in MEDIA_TRUSTED_HTTP_ORIGINS:
+        return False, False
+    if not path.startswith("/pic/"):
+        return False, False
+
+    decoded_path = unquote(path)
+    if "://" in path or "://" in decoded_path:
+        return False, False
+    return True, origin in MEDIA_TRUSTED_HTTP_ORIGINS
+
+
+async def _is_safe_remote_media_url(url: str) -> tuple[bool, str]:
+    parsed = urlparse((url or "").strip())
+    scheme = (parsed.scheme or "").lower()
+    host = (parsed.hostname or "").strip().lower()
+    is_trusted, is_http_trusted = _is_trusted_media_url(parsed)
+
+    if not scheme or not host:
+        return False, "missing-scheme-or-host"
+    if scheme == "http" and is_trusted and is_http_trusted:
+        pass
+    elif scheme != "https":
+        return False, f"scheme-not-allowed:{scheme}"
+    if parsed.username or parsed.password:
+        return False, "userinfo-not-allowed"
+    if host in MEDIA_BLOCKED_HOSTS and not is_trusted:
+        return False, "blocked-host"
+
+    if _is_blocked_ip(host) and not is_trusted:
+        return False, "blocked-ip"
+    if is_trusted:
+        return True, "trusted-media-host"
+
+    loop = asyncio.get_running_loop()
+    try:
+        infos = await loop.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except Exception:
+        return False, "dns-resolution-failed"
+
+    resolved_ips: set[str] = set()
+    for info in infos:
+        sockaddr = info[4]
+        if not sockaddr:
+            continue
+        ip_text = str(sockaddr[0]).strip()
+        if ip_text:
+            resolved_ips.add(ip_text)
+
+    if not resolved_ips:
+        return False, "no-dns-results"
+
+    for ip_text in resolved_ips:
+        if _is_blocked_ip(ip_text):
+            return False, f"blocked-resolved-ip:{ip_text}"
+
+    return True, "ok"
 
 
 def _should_retry_image_download(url: str) -> bool:
@@ -1053,15 +1169,14 @@ async def download_image(session, url):
     for attempt in range(1, total_attempts + 1):
         error_detail = ""
         try:
-            async with session.get(url) as response:
-                if response.status == 200:
-                    if attempt > 1:
-                        logging.warning(
-                            "mastodon_bot: Bild-Download nach Retry erfolgreich "
-                            f"(versuch={attempt}/{total_attempts}): {url}"
-                        )
-                    return await response.read()
-                error_detail = f"HTTP {response.status}"
+            img_bytes, _, error_detail = await _download_with_safe_redirects(session, url)
+            if img_bytes is not None:
+                if attempt > 1:
+                    logging.warning(
+                        "mastodon_bot: Bild-Download nach Retry erfolgreich "
+                        f"(versuch={attempt}/{total_attempts}): {url}"
+                    )
+                return img_bytes
         except Exception as e:
             error_detail = str(e)
 
@@ -1085,15 +1200,47 @@ async def download_image(session, url):
 
 
 async def download_binary(session, url):
-    try:
-        async with session.get(url) as response:
-            if response.status == 200:
-                return await response.read(), response.headers.get("Content-Type", "")
-            logging.error(f"mastodon_bot: Fehler beim Herunterladen der Datei: {url}")
-            return None, ""
-    except Exception as e:
-        logging.error(f"mastodon_bot: Fehler beim Herunterladen der Datei: {e}")
-        return None, ""
+    payload, content_type, error_detail = await _download_with_safe_redirects(session, url)
+    if payload is not None:
+        return payload, content_type
+    if error_detail:
+        logging.error(f"mastodon_bot: Fehler beim Herunterladen der Datei: {error_detail}")
+    return None, ""
+
+
+async def _download_with_safe_redirects(session, url):
+    current_url = str(url or "").strip()
+    max_hops = max(0, MEDIA_MAX_REDIRECTS)
+
+    for _ in range(max_hops + 1):
+        is_safe, reason = await _is_safe_remote_media_url(current_url)
+        if not is_safe:
+            return None, "", f"unsafe-url({reason}): {current_url}"
+
+        response = None
+        try:
+            response = await session.get(current_url, allow_redirects=False)
+            status = int(response.status)
+            if status in MEDIA_REDIRECT_STATUSES:
+                location = (response.headers.get("Location") or "").strip()
+                if not location:
+                    return None, "", f"redirect-without-location: {current_url}"
+                current_url = urljoin(current_url, location)
+                continue
+
+            if status == 200:
+                payload = await response.read()
+                content_type = response.headers.get("Content-Type", "")
+                return payload, content_type, ""
+
+            return None, "", f"HTTP {status}: {current_url}"
+        except Exception as e:
+            return None, "", str(e)
+        finally:
+            if response is not None:
+                response.release()
+
+    return None, "", f"too-many-redirects>{max_hops}: {current_url}"
 
 
 async def generate_alt_text(
@@ -1310,7 +1457,7 @@ def prepare_image_for_upload(orig_image_bytes, ext):
 
 async def prepare_media_payloads(images, original_tweet_full: str, twitter_account: str, tweet_url: str):
     """
-    Holt Bilder (lokal oder remote), konvertiert sie und generiert je Bild einmal Alt-Text.
+    Holt Bilder aus sicheren Remote-URLs, konvertiert sie und generiert je Bild einmal Alt-Text.
     Gibt Liste von Payloads mit Bytes + Alt-Text zurück.
     """
     payloads = []
@@ -1320,16 +1467,7 @@ async def prepare_media_payloads(images, original_tweet_full: str, twitter_accou
             try:
                 img_bytes = None
                 ext = os.path.splitext(image_link)[1].lower() if isinstance(image_link, str) else ".jpg"
-
-                if isinstance(image_link, str) and os.path.isfile(image_link):
-                    try:
-                        async with aiofiles.open(image_link, 'rb') as image_file:
-                            img_bytes = await image_file.read()
-                    except Exception as e:
-                        logging.error(f"mastodon_bot: Fehler beim Lesen des Bildes {image_link}: {e}")
-                        continue
-                else:
-                    img_bytes = await download_image(session, str(image_link))
+                img_bytes = await download_image(session, str(image_link))
 
                 if not img_bytes:
                     logging.error("mastodon_bot: Kein Bild erhalten, überspringe dieses Bild.")
