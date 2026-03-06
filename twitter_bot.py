@@ -1,10 +1,7 @@
 import telegram_bot
 import mastodon_bot
 import time
-import datetime
-import os
 import re
-import shutil
 import asyncio
 import logging
 from typing import Optional, Tuple
@@ -360,15 +357,6 @@ def collect_tweet_data(tweet, index: int) -> Optional[dict]:
     try:
         user, username = extract_user_fields(tweet)
         content = extract_content(tweet)
-
-        try:
-            replies_element = tweet.find_element(By.CSS_SELECTOR, '[data-testid="reply"]')
-            replies = replies_element.text
-        except StaleElementReferenceException:
-            raise
-        except Exception as ex:
-            logging.warning(f"twitter_bot: Error finding replies element: {ex}")
-            replies = ""
 
         var_href = extract_status_url(tweet)
 
