@@ -6,6 +6,7 @@ import json
 import telegram
 from datetime import datetime, timedelta
 import logging
+from logging.handlers import WatchedFileHandler
 import subprocess
 import re
 from mastodon_text_utils import split_mastodon_text
@@ -30,7 +31,7 @@ except Exception:
 
 # Configure logging (für dieses Script)
 logging.basicConfig(
-    filename=LOG_FILE,
+    handlers=[WatchedFileHandler(LOG_FILE)],
     level=logging.WARNING,
     format=BOT_LOG_FORMAT
 )
@@ -171,7 +172,7 @@ def _build_file_logger(name: str, *, level: int) -> logging.Logger:
             return logger
 
     try:
-        handler = logging.FileHandler(BOT_LOG_FILE)
+        handler = WatchedFileHandler(BOT_LOG_FILE)
     except Exception:
         return logger
 

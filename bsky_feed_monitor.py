@@ -4,6 +4,7 @@
 import time
 import argparse
 import logging
+from logging.handlers import WatchedFileHandler
 import asyncio
 import hashlib
 import re
@@ -25,7 +26,7 @@ from paths import LOG_FILE
 # Ursprünglich war level=logging.ERROR; fürs Debug/Info beim Start setze ich INFO.
 # Wenn du nur Fehler möchtest, ändere auf logging.ERROR.
 logging.basicConfig(
-    filename=LOG_FILE,
+    handlers=[WatchedFileHandler(LOG_FILE)],
     level=logging.INFO,
     format='%(asctime)s %(levelname)s %(message)s'
 )

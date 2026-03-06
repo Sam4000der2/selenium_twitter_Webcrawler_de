@@ -3,6 +3,7 @@ import os
 import telegram
 import json
 import logging
+from logging.handlers import WatchedFileHandler
 import re
 import time
 import state_store
@@ -13,7 +14,7 @@ DATA_FILE = DEFAULT_DATA_FILE
 
 # Configure logging
 logging.basicConfig(
-    filename=LOG_FILE,
+    handlers=[WatchedFileHandler(LOG_FILE)],
     level=logging.INFO,
     format='%(asctime)s %(levelname)s:%(message)s'
 )

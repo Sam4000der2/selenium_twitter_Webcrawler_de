@@ -1,10 +1,10 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 BASE_DIR="${BOTS_BASE_DIR:-$(cd "$(dirname "$0")" && pwd)}"
-LOGFILE="$BASE_DIR/twitter_bot.log"
+LOGFILE="${BOT_LOG_FILE:-$BASE_DIR/twitter_bot.log}"
 LOGDIR="$BASE_DIR/logs"
-PYTHON_BIN="$BASE_DIR/venv/bin/python3"
+PYTHON_BIN="${PYTHON_BIN:-$BASE_DIR/venv/bin/python3}"
 
 YESTERDAY=$(date -d "yesterday" +"%Y-%m-%d")
 ARCHIVED_LOG="$LOGDIR/twitter_bot.log.$YESTERDAY"
@@ -17,12 +17,12 @@ else
 fi
 
 mkdir -p "$LOGDIR"
+mkdir -p "$(dirname "$LOGFILE")"
 
 if [ -f "$LOGFILE" ]; then
     mv "$LOGFILE" "$ARCHIVED_LOG"
 fi
 
-touch "$LOGFILE"
-chmod 644 "$LOGFILE"
+install -m 644 /dev/null "$LOGFILE"
 
 find "$LOGDIR" -type f -name "twitter_bot.log.*" -mtime +14 -delete
