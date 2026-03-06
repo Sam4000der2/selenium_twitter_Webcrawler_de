@@ -4,6 +4,7 @@
 import time
 import argparse
 import logging
+from logging.handlers import WatchedFileHandler
 import asyncio
 import hashlib
 import re
@@ -24,7 +25,7 @@ import state_store
 # Ursprünglich war level=logging.ERROR; fürs Debug/Info beim Start setze ich INFO.
 # Wenn du nur Fehler möchtest, ändere auf logging.ERROR.
 logging.basicConfig(
-    filename='/home/sascha/bots/twitter_bot.log',
+    handlers=[WatchedFileHandler('/home/sascha/bots/twitter_bot.log')],
     level=logging.INFO,
     format='%(asctime)s %(levelname)s %(message)s'
 )

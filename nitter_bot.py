@@ -5,6 +5,7 @@ import asyncio
 import html
 import json
 import logging
+from logging.handlers import WatchedFileHandler
 import os
 import re
 import time
@@ -77,7 +78,7 @@ TEXT_URL_RX = re.compile(
 MENTION_RE = re.compile(r"(?<!\w)@([A-Za-z0-9_]{1,30})")
 
 logging.basicConfig(
-    filename=LOG_PATH,
+    handlers=[WatchedFileHandler(LOG_PATH)],
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
 )

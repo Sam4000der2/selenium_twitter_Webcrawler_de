@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 import logging
+from logging.handlers import WatchedFileHandler
 from threading import Lock
 from datetime import date, datetime, time, timedelta
 from urllib.parse import urlparse
@@ -97,7 +98,7 @@ INSTANCE_QUOTE_POLICIES: dict[str, str] = {}
 QUOTE_POLICY_DISABLED_VALUES = {"disabled", "deny", "disallow"}
 
 logging.basicConfig(
-    filename=LOG_PATH,
+    handlers=[WatchedFileHandler(LOG_PATH)],
     level=logging.INFO,
     format='%(asctime)s %(levelname)s:%(message)s',
     force=True,
@@ -114,7 +115,7 @@ helper_logger.propagate = True
 # Eigener Alt-Text-Logger mit INFO-Level, ohne globale Log-Flut.
 alt_text_logger = logging.getLogger("mastodon_alt_text")
 if not alt_text_logger.handlers:
-    _alt_handler = logging.FileHandler(LOG_PATH)
+    _alt_handler = WatchedFileHandler(LOG_PATH)
     _alt_handler.setLevel(logging.INFO)
     _alt_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s:%(message)s'))
     alt_text_logger.addHandler(_alt_handler)

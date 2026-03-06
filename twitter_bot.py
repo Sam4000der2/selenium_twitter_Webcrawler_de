@@ -7,6 +7,7 @@ import re
 import shutil
 import asyncio
 import logging
+from logging.handlers import WatchedFileHandler
 from typing import Optional, Tuple
 from urllib.parse import urlparse
 from selenium import webdriver
@@ -38,7 +39,11 @@ HISTORY_LIMIT = 100
 HISTORY_TRIM_TO = 50
 
 # Logging configuration
-logging.basicConfig(filename='/home/sascha/bots/twitter_bot.log', level=logging.WARNING, force=True)
+logging.basicConfig(
+    handlers=[WatchedFileHandler('/home/sascha/bots/twitter_bot.log')],
+    level=logging.WARNING,
+    force=True
+)
 #print("Logging configured")
 
 # Set Firefox options

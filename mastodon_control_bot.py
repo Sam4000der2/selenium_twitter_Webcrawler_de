@@ -2,6 +2,7 @@ import asyncio
 import html
 import json
 import logging
+from logging.handlers import WatchedFileHandler
 import os
 import re
 import subprocess
@@ -132,7 +133,7 @@ def setup_logging():
         logger.handlers.clear()
 
     try:
-        handler = logging.FileHandler(BOT_LOG_FILE)
+        handler = WatchedFileHandler(BOT_LOG_FILE)
         handler.setLevel(logging.WARNING)
         handler.setFormatter(fmt)
         logger.addHandler(handler)
@@ -157,7 +158,7 @@ def _build_file_logger(name: str, *, level: int) -> logging.Logger:
             return logger
 
     try:
-        handler = logging.FileHandler(BOT_LOG_FILE)
+        handler = WatchedFileHandler(BOT_LOG_FILE)
     except Exception:
         return logger
 

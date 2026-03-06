@@ -3,6 +3,7 @@ import os
 import telegram
 import json
 import logging
+from logging.handlers import WatchedFileHandler
 import re
 import time
 import state_store
@@ -12,7 +13,7 @@ DATA_FILE = '/home/sascha/bots/data.json'
 
 # Configure logging
 logging.basicConfig(
-    filename='/home/sascha/bots/twitter_bot.log',
+    handlers=[WatchedFileHandler('/home/sascha/bots/twitter_bot.log')],
     level=logging.INFO,
     format='%(asctime)s %(levelname)s:%(message)s'
 )
