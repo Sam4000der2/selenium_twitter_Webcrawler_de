@@ -3,6 +3,7 @@ import mastodon_bot
 import time
 import re
 import asyncio
+import os
 import logging
 from logging.handlers import WatchedFileHandler
 from typing import Optional, Tuple
@@ -24,15 +25,25 @@ from paths import LOG_FILE
 
 #print("Imports successful")
 
-# Firefox Profile Path
-firefox_profile_path = "/home/sascha/.mozilla/firefox/rvkkf54c.Twitter"
-geckodriver_path = "/usr/local/bin/geckodriver"
+DEFAULT_TWITTER_LIST_URL = "https://x.com/i/lists/1901917316708778158"
+DEFAULT_GECKODRIVER_PATH = "/usr/local/bin/geckodriver"
 
-# Twitter Link
-#twitter_link = "https://x.com/i/lists/1741534129215172901"
-
-#eigene Liste:
-twitter_link = "https://x.com/i/lists/1901917316708778158"
+# Runtime-Konfiguration aus ENV (Legacy-Namen als Fallback).
+firefox_profile_path = (
+    os.environ.get("TWITTER_FIREFOX_PROFILE_PATH")
+    or os.environ.get("FIREFOX_PROFILE_PATH")
+    or ""
+).strip()
+geckodriver_path = (
+    os.environ.get("TWITTER_GECKODRIVER_PATH")
+    or os.environ.get("GECKODRIVER_PATH")
+    or DEFAULT_GECKODRIVER_PATH
+).strip()
+twitter_link = (
+    os.environ.get("TWITTER_LIST_URL")
+    or os.environ.get("TWITTER_LINK")
+    or DEFAULT_TWITTER_LIST_URL
+).strip()
 
 HISTORY_LIMIT = 100
 HISTORY_TRIM_TO = 50
@@ -55,12 +66,18 @@ try:
 except Exception as e:
     logging.error(f"twitter_bot: Fehler bei firefox_options.add_argument headless: {e}")
 
-# Stattdessen: Erstelle ein FirefoxProfile-Objekt und setze es in den Optionen
-try:
-    firefox_profile = FirefoxProfile(firefox_profile_path)
-    firefox_options.profile = firefox_profile
-except Exception as e:
-    logging.error(f"twitter_bot: Fehler beim Setzen des Firefox Profil: {e}")
+# Optionales Firefox-Profil (für eingeloggte X-Session/Cookies).
+if firefox_profile_path:
+    try:
+        firefox_profile = FirefoxProfile(firefox_profile_path)
+        firefox_options.profile = firefox_profile
+    except Exception as e:
+        logging.warning(
+            f"twitter_bot: Firefox-Profil konnte nicht gesetzt werden "
+            f"({firefox_profile_path}): {e}"
+        )
+else:
+    logging.info("twitter_bot: Kein Firefox-Profil konfiguriert, starte ohne Profil.")
 
 def expand_short_urls(urls):
     """
