@@ -1345,7 +1345,7 @@ async def admin_send_me(message):
 async def start_bot():
     if not BOT_TOKEN:
         logging.error("telegram_control_bot: Start abgebrochen – ENV 'telegram_token' fehlt.")
-        return
+        raise SystemExit(2)
 
     bot = telegram.Bot(token=BOT_TOKEN)
     update_id = None

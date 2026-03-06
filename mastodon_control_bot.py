@@ -2401,11 +2401,31 @@ async def start_bot():
     tasks = []
     if EVENT_ENABLED:
         tasks.append(asyncio.create_task(start_event_listener()))
+    configured_instances = []
     for name, cfg in INSTANCES.items():
+        token_env = cfg.get("access_token_env") or ""
+        if os.environ.get(token_env):
+            configured_instances.append((name, cfg))
+        else:
+            logging.error(
+                "mastodon_control_bot: Instanz %s deaktiviert – ENV '%s' fehlt.",
+                name,
+                token_env,
+            )
+
+    for name, cfg in configured_instances:
         tasks.append(asyncio.create_task(_run_instance(name, cfg)))
+
+    if not configured_instances and not EVENT_ENABLED:
+        logging.error(
+            "mastodon_control_bot: Start abgebrochen – keine Instanz-Tokens gesetzt "
+            "und Event-Listener deaktiviert."
+        )
+        raise SystemExit(2)
+
     if not tasks:
         logging.warning("mastodon_control_bot: Keine Instanz-Tasks gestartet.")
-        return
+        raise SystemExit(2)
     try:
         await asyncio.gather(*tasks)
     except KeyboardInterrupt:
