@@ -4,18 +4,41 @@ import os
 from pathlib import Path
 
 
+def _ensure_writable_dir(path: Path) -> bool:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
+
+    probe_file = path / ".bots_write_probe"
+    try:
+        probe_file.touch(exist_ok=True)
+    except OSError:
+        return False
+    finally:
+        try:
+            probe_file.unlink()
+        except OSError:
+            pass
+    return True
+
+
 def _resolve_base_dir() -> Path:
     default_dir = Path(__file__).resolve().parent
     requested_raw = os.environ.get("BOTS_BASE_DIR")
     requested = Path(requested_raw).expanduser() if requested_raw else default_dir
-    resolved = requested.resolve()
     try:
-        resolved.mkdir(parents=True, exist_ok=True)
-        return resolved
+        resolved = requested.resolve()
     except OSError:
-        # Fallback keeps startup alive when BOTS_BASE_DIR is invalid/unwritable.
-        default_dir.mkdir(parents=True, exist_ok=True)
+        resolved = default_dir
+
+    if _ensure_writable_dir(resolved):
+        return resolved
+
+    if _ensure_writable_dir(default_dir):
         return default_dir
+
+    return Path.cwd()
 
 
 BASE_DIR = _resolve_base_dir()

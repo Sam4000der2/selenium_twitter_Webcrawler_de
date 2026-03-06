@@ -21,10 +21,7 @@ import telegram_bot
 import mastodon_bot
 import state_store
 from url_safety import validate_outbound_url
-from paths import BASE_DIR as DEFAULT_BASE_DIR
-
-BASE_DIR = os.environ.get("BOTS_BASE_DIR", str(DEFAULT_BASE_DIR))
-LOG_PATH = os.path.join(BASE_DIR, "twitter_bot.log")
+from paths import LOG_FILE
 _ENV_PARSE_WARNINGS: list[str] = []
 
 
@@ -100,7 +97,7 @@ TEXT_URL_RX = re.compile(
 MENTION_RE = re.compile(r"(?<!\w)@([A-Za-z0-9_]{1,30})")
 
 logging.basicConfig(
-    handlers=[WatchedFileHandler(LOG_PATH)],
+    handlers=[WatchedFileHandler(LOG_FILE)],
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
 )
