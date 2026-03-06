@@ -5,8 +5,11 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 venv/
+/.tmp-venv/
+/.tmp-*/
 venc/
 .env
 .DS_Store
 data.json
 logs/
+*.db

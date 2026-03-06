@@ -25,6 +25,8 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   `export BOTS_BASE_DIR="$(pwd)" && python3 -m venv "$BOTS_BASE_DIR/venv" && source "$BOTS_BASE_DIR/venv/bin/activate"`
 - Abhängigkeiten installieren (im Ordner `bots/`):  
   `pip install -r requirements.txt`
+- Für lokale Checks/Testentwicklung zusätzlich Dev-Tools installieren:  
+  `pip install -r requirements-dev.txt`
 - Firefox + Geckodriver (Default-Pfad `/usr/local/bin/geckodriver`; optional ENV `TWITTER_GECKODRIVER_PATH`). Für eingeloggte X-Sessions optional `TWITTER_FIREFOX_PROFILE_PATH` setzen.
 - Netz- und API-Zugänge per Environment:
   - Telegram: `TELEGRAM_TOKEN`, `TELEGRAM_ADMIN` (Legacy-Fallback: `telegram_token`, `telegram_admin`)
@@ -78,6 +80,11 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 
 3) Alt-Texte testen (ohne Posten):  
    `python test_alt_text.py --dummy` (offline) oder `python test_alt_text.py --image <pfad>` mit gesetztem `GEMINI_API_KEY` (optional plus `GEMINI_API_KEY1..4`).
+
+4) Projekt-Checks lokal ausführen:
+   - `./venv/bin/python -m compileall -q -x '(^|/)venv($|/)' .`
+   - `./venv/bin/pytest tests tests-unit`
+   - `./venv/bin/ruff check .`
 
 ## Services (systemd)
 - Vorlagen liegen unter `services/`: `twitter_bot.service`, `bsky_bot.service`, `telegram_control_bot.service`, `mastodon_control_bot.service`, `nitter_bot.service`.
