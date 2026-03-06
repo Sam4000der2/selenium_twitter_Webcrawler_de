@@ -18,6 +18,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 - `mastodon_control_bot.py`: Mastodon-DM-Bot zum Verwalten der Tagging-Regeln (`/start`, `/add`, `/list`, `/overview`, `/delete`, `/pause`, `/resume`, `/schedule`, `/stop`). Lauscht optional auf Events vom Posting-Bot.
 - `gemini_helper.py` + `test_alt_text.py`: Modellverwaltung für Gemini (Cache in der DB) und Offline/Online-Test der Alt-Text-Generierung (`python test_alt_text.py --image <pfad> [--dummy]`).
 - Daten/Logs: zentrale SQLite-DB `nitter_bot.db` (Chat-Filter, Mastodon-Regeln, Gemini-Cache, Histories inkl. Mastodon-Posts) und Log unter `$BOTS_BASE_DIR/twitter_bot.log` (Default: aktueller Repo-Ordner).
+- Legacy-Telegram-State: `data.json` ist eine lokale Laufzeitdatei (nicht versioniert). Im Repo liegt nur `data.json.example` als Vorlage.
 
 ## Voraussetzungen & Installation
 - Python 3 + virtuelles Environment (empfohlen):  
