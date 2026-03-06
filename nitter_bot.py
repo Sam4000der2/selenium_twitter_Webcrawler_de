@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import html
+import importlib
 import json
 import logging
 from logging.handlers import WatchedFileHandler
@@ -17,8 +18,6 @@ from dateutil.parser import parse
 import pytz
 import requests
 
-import telegram_bot
-import mastodon_bot
 import state_store
 from url_safety import validate_outbound_url
 from paths import BASE_DIR as DEFAULT_BASE_DIR
@@ -26,6 +25,17 @@ from paths import BASE_DIR as DEFAULT_BASE_DIR
 BASE_DIR = os.environ.get("BOTS_BASE_DIR", str(DEFAULT_BASE_DIR))
 LOG_PATH = os.path.join(BASE_DIR, "twitter_bot.log")
 _ENV_PARSE_WARNINGS: list[str] = []
+_telegram_bot_module = None
+_mastodon_bot_module = None
+
+
+def _load_delivery_modules():
+    global _telegram_bot_module, _mastodon_bot_module
+    if _telegram_bot_module is None:
+        _telegram_bot_module = importlib.import_module("telegram_bot")
+    if _mastodon_bot_module is None:
+        _mastodon_bot_module = importlib.import_module("mastodon_bot")
+    return _telegram_bot_module, _mastodon_bot_module
 
 
 def _parse_int_env(name: str, default: int, *, min_value: int | None = None) -> int:
@@ -1167,6 +1177,7 @@ async def main():
                 # Unabhängig von neuen/alten Einträgen fällige Telegram-Retry-Jobs bearbeiten.
                 telegram_batch = new_tweets if new_tweets else []
                 try:
+                    telegram_bot, _ = _load_delivery_modules()
                     await telegram_bot.main(telegram_batch)
                 except Exception as exc:
                     logging.error(f"nitter_bot: Fehler in telegram_bot (retry-loop): {exc}")
@@ -1175,6 +1186,7 @@ async def main():
                 # Unabhängig von neuen/alten Einträgen fällige Mastodon-Retry-Jobs bearbeiten.
                 mastodon_batch = new_tweets if new_tweets else []
                 try:
+                    _, mastodon_bot = _load_delivery_modules()
                     await mastodon_bot.main(mastodon_batch)
                 except Exception as exc:
                     logging.error(f"nitter_bot: Fehler in mastodon_bot (retry-loop): {exc}")
