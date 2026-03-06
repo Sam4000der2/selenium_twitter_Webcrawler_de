@@ -4,7 +4,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 
 ## Wichtige Hinweise
 - Keine Snap-Pakete nutzen (Selenium + Snap machen Probleme); Firefox via Flatpak ist nicht getestet, Chrome ist möglich aber instabiler.
-- Twitter/X-Listen brauchen in der Regel einen eingeloggten Account. Nutze ein Firefox-Profil (`about:profiles`) und passe `firefox_profile_path` an. Falls die Zielseite öffentlich ist, kannst du ohne Login arbeiten, indem du das Profil im Code entfernst (Profile-Zeilen auskommentieren) und optional `delete_temp_files` deaktivierst.
+- Twitter/X-Listen brauchen in der Regel einen eingeloggten Account. Nutze ein Firefox-Profil (`about:profiles`) und passe `firefox_profile_path` an. Falls die Zielseite öffentlich ist, kannst du ohne Login arbeiten, indem du die Profil-Zuweisung im Code entfernst (Profile-Zeilen auskommentieren).
 - Geckodriver muss verfügbar sein (`/usr/local/bin/geckodriver` voreingestellt). Falls Selenium ihn nicht automatisch findet, manuell installieren/kopieren.
 - Bestehende TXT/CSV/JSON-State-Dateien müssen in die neue DB (`nitter_bot.db`) migriert werden; ein separates Migrationsskript folgt.
 
@@ -40,11 +40,11 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   - Firefox-Profil (`firefox_profile_path`) und Geckodriver-Pfad konfigurieren. Läuft headless und pollt alle 60 s.
   - Neue Links werden in `nitter_bot.db` dedupliziert; `var_href` wird beim Telegram-Versand auf `nitter.net` umgeschrieben.
   - Kurz-URLs werden erweitert; Bilder/Videos und externe Links gehen an Mastodon weiter.
-  - Optional ohne Login: Profil-Zuweisung in `twitter_bot.py` auskommentieren und `delete_temp_files` deaktivieren (siehe Hinweise oben).
+  - Optional ohne Login: Profil-Zuweisung in `twitter_bot.py` auskommentieren (siehe Hinweise oben).
 
 - **Nitter-RSS (`nitter_bot.py`)**
   - Arbeitet gegen `NITTER_BASE_URL` (Standard `http://localhost:8081`) und liest Accounts samt Intervallen/Zeitfenstern aus der DB (Default-Seed wie bisher).
-  - Default-Poll: 15 Minuten (900 s); `SBahnBerlin` ist per Seed mit 120 s von 05:55–22:05 hinterlegt.
+  - Loop-Fallback-Sleep: 60 s (`NITTER_POLL_INTERVAL`), pro Account gelten die in der DB gespeicherten Intervalle (z. B. `SBahnBerlin` mit 120 s von 05:55–22:05).
   - Dedupliziert per DB-History und baut die Status-Links zu `x.com/<user>/status/<id>` für Telegram/Mastodon.
   - History-Limit per `NITTER_HISTORY_LIMIT` einstellbar; `NITTER_POLL_INTERVAL` steuert das Loop-Fallback-Sleep (min. 15 s).
 
@@ -92,8 +92,9 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   opnv_toot=...
   opnv_mastodon=...
   ```
-- Env-File anlegen (für Service und lokale Tests):  
+- Env-File anlegen (für Service und lokale Tests) mit restriktiven Rechten:  
   ```bash
+  sudo install -m 600 /dev/null /etc/twitter_bot.env
   sudo tee /etc/twitter_bot.env >/dev/null <<'EOF'
   BOTS_BASE_DIR=/home/<user>/Dokumente/bots
   GEMINI_API_KEY=DEIN_KEY
@@ -107,6 +108,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   opnv_toot=TOKEN
   opnv_mastodon=TOKEN
   EOF
+  sudo chmod 600 /etc/twitter_bot.env
   ```
 - Manuell testen ohne Service:  
   `set -a; source /etc/twitter_bot.env; set +a; export BOTS_BASE_DIR="$(pwd)"; python twitter_bot.py`  
