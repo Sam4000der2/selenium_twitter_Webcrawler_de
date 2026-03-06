@@ -123,7 +123,7 @@ if not alt_text_logger.handlers:
     alt_text_logger.addHandler(_alt_handler)
 alt_text_logger.setLevel(logging.INFO)
 alt_text_logger.propagate = False
-print("Logging configured")
+logging.info("mastodon_bot: Logging configured.")
 
 # Pfad für Tagging-Regeln (wird vom Control-Bot gepflegt)
 BERLIN_TZ = ZoneInfo("Europe/Berlin")
@@ -167,7 +167,7 @@ alt_text = (
 # Platzhalter für Quota-Sperren, damit generate_alt_text nicht mit NameError abbricht
 EXHAUSTED_MODELS: dict[str, datetime] = {}
 
-print("Instances configured")
+logging.info("mastodon_bot: Instances configured.")
 
 MASTODON_MAX_CHARS = 500
 MASTODON_MIN_CONTENT_LEN = int(os.environ.get("MASTODON_MIN_CONTENT_LEN", "8"))
@@ -1966,7 +1966,7 @@ async def _process_pending_mastodon_retries(clients: list[tuple[str, Any]]):
 
 
 async def main(new_tweets, thread: bool = False):
-    print("Entering main function")
+    logging.info("mastodon_bot: Entering main function.")
 
     mastodon_post_store.init_db()
     mastodon_post_store.prune_expired()
@@ -1983,7 +1983,7 @@ async def main(new_tweets, thread: bool = False):
 
         try:
             mastodon = Mastodon(access_token=access_token, api_base_url=api_base_url)
-            print(f"Created Mastodon object for {instance_name}")
+            logging.info(f"mastodon_bot: Created Mastodon client for {instance_name}.")
             clients.append((instance_name, mastodon))
         except Exception as e:
             logging.error(f"mastodon_bot: Fehler beim Erstellen des Mastodon-Objekts für {instance_name}: {e}")
@@ -2184,9 +2184,13 @@ async def main(new_tweets, thread: bool = False):
                     quote_for_post = quoted_status_id_for_instance if supports_quote and idx == 0 else None
 
                     if attach_media:
-                        print(f"Posting tweet with media for {username} to {instance_name}")
+                        logging.debug(
+                            f"mastodon_bot: Posting tweet with media for {username} to {instance_name}."
+                        )
                     else:
-                        print(f"Posting tweet without images for {username} to {instance_name}")
+                        logging.debug(
+                            f"mastodon_bot: Posting tweet without images for {username} to {instance_name}."
+                        )
 
                     status_obj, image_payloads = await _post_with_media_fallbacks(
                         mastodon=mastodon,
@@ -2331,7 +2335,7 @@ async def main(new_tweets, thread: bool = False):
             logging.error(f"mastodon_bot: Unerwarteter Fehler in Tweet-Loop (url={tweet.get('var_href', '')}, user={tweet.get('username', '')}): {e}")
             continue
 
-    print("Main function completed")
+    logging.info("mastodon_bot: Main function completed.")
 
 
-print("Script loaded")
+logging.info("mastodon_bot: Script loaded.")
