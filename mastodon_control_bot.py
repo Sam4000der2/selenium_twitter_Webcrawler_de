@@ -10,6 +10,11 @@ import time as time_module
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from control_bot_utils import (
+    build_file_logger,
+    describe_network_error,
+    should_pause_on_network_error,
+)
 from mastodon import Mastodon
 from mastodon_text_utils import split_mastodon_text
 import state_store
@@ -114,51 +119,6 @@ ACCOUNT_GROUPS = {
     "vbbvip": ["vbb", "VIP"],
 }
 
-DNS_ERROR_MARKERS = (
-    "failed to resolve",
-    "temporary failure in name resolution",
-    "name or service not known",
-    "nodename nor servname provided",
-    "no address associated with hostname",
-    "getaddrinfo failed",
-    "name resolution",
-    "dns",
-)
-
-CONNECTION_ERROR_MARKERS = (
-    "failed to establish a new connection",
-    "newconnectionerror",
-    "connection aborted",
-    "connection reset",
-    "connection refused",
-    "connection broken",
-    "network is unreachable",
-    "remote end closed connection",
-    "remotedisconnected",
-    "server disconnected",
-    "remoteprotocolerror",
-    "protocolerror",
-    "readerror",
-    "connecterror",
-)
-
-GATEWAY_ERROR_MARKERS = (
-    "bad gateway",
-    "service unavailable",
-    "gateway timeout",
-    "gateway time-out",
-)
-
-TLS_ERROR_MARKERS = (
-    "proxyerror",
-    "sslerror",
-    "certificate verify failed",
-    "tlsv1 alert",
-)
-
-HTTP_GATEWAY_STATUS_RX = re.compile(r"\b(?:502|503|504)\b")
-
-
 def setup_logging():
     fmt = logging.Formatter(BOT_LOG_FORMAT)
     logger = logging.getLogger()
@@ -182,26 +142,12 @@ setup_logging()
 
 
 def _build_file_logger(name: str, *, level: int) -> logging.Logger:
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
-    logger.propagate = False
-
-    target_path = os.path.abspath(BOT_LOG_FILE)
-    for handler in logger.handlers:
-        if isinstance(handler, logging.FileHandler) and getattr(handler, "baseFilename", "") == target_path:
-            handler.setLevel(level)
-            handler.setFormatter(logging.Formatter(BOT_LOG_FORMAT))
-            return logger
-
-    try:
-        handler = WatchedFileHandler(BOT_LOG_FILE)
-    except Exception:
-        return logger
-
-    handler.setLevel(level)
-    handler.setFormatter(logging.Formatter(BOT_LOG_FORMAT))
-    logger.addHandler(handler)
-    return logger
+    return build_file_logger(
+        name,
+        log_file=BOT_LOG_FILE,
+        log_format=BOT_LOG_FORMAT,
+        level=level,
+    )
 
 
 PAUSE_INFO_LOGGER = _build_file_logger("mastodon_control_bot.pause", level=logging.INFO)
@@ -218,75 +164,12 @@ YES = {"ja", "j", "yes", "y"}
 NO = {"nein", "n", "no"}
 
 
-def _contains_any_marker(error_text: str, markers: tuple[str, ...]) -> bool:
-    text = (error_text or "").lower()
-    return bool(text) and any(marker in text for marker in markers)
-
-
-def _is_max_retries_exceeded_error(error_text: str) -> bool:
-    return "max retries exceeded with url" in (error_text or "").lower()
-
-
-def _is_timeout_error(error_text: str) -> bool:
-    text = (error_text or "").lower()
-    if not text:
-        return False
-    markers = (
-        "timed out",
-        "read timeout",
-        "connect timeout",
-        "gateway timeout",
-        "gateway time-out",
-    )
-    if any(marker in text for marker in markers):
-        return True
-    return bool(re.search(r"\btime[ -]?out\b", text))
-
-
-def _is_dns_error(error_text: str) -> bool:
-    return _contains_any_marker(error_text, DNS_ERROR_MARKERS)
-
-
-def _is_connection_error(error_text: str) -> bool:
-    return _contains_any_marker(error_text, CONNECTION_ERROR_MARKERS)
-
-
-def _is_gateway_error(error_text: str) -> bool:
-    text = (error_text or "").lower()
-    return _contains_any_marker(text, GATEWAY_ERROR_MARKERS) or bool(HTTP_GATEWAY_STATUS_RX.search(text))
-
-
-def _is_tls_error(error_text: str) -> bool:
-    return _contains_any_marker(error_text, TLS_ERROR_MARKERS)
-
-
 def _describe_network_error(error_text: str) -> str:
-    if _is_max_retries_exceeded_error(error_text):
-        return "max retries exceeded"
-    if _is_timeout_error(error_text):
-        return "timeout"
-    if _is_dns_error(error_text):
-        return "dns/namensaufloesung"
-    if _is_gateway_error(error_text):
-        return "gateway"
-    if _is_tls_error(error_text):
-        return "ssl/tls"
-    if _is_connection_error(error_text):
-        return "verbindung"
-    return "netzwerk"
+    return describe_network_error(error_text)
 
 
 def _is_instance_pause_error(error_text: str) -> bool:
-    return any(
-        (
-            _is_max_retries_exceeded_error(error_text),
-            _is_timeout_error(error_text),
-            _is_dns_error(error_text),
-            _is_connection_error(error_text),
-            _is_gateway_error(error_text),
-            _is_tls_error(error_text),
-        )
-    )
+    return should_pause_on_network_error(error_text)
 
 
 def _pause_instance_if_needed(instance_name: str, error_text: str, *, source: str) -> bool:

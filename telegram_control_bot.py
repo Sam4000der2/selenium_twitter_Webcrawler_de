@@ -9,6 +9,11 @@ import logging
 from logging.handlers import WatchedFileHandler
 import subprocess
 import re
+from control_bot_utils import (
+    build_file_logger,
+    describe_network_error,
+    should_pause_on_network_error,
+)
 from mastodon_text_utils import split_mastodon_text
 from paths import BASE_DIR, DATA_FILE as DEFAULT_DATA_FILE, LOG_DIR as DEFAULT_LOG_DIR, LOG_FILE
 
@@ -99,6 +104,7 @@ BUS_ERROR_MARKERS = (
 # Zeitstempel am Anfang der Zeile
 TS_RX = re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+(?P<rest>.*)$")
 
+<<<<<<< HEAD
 DNS_ERROR_MARKERS = (
     "failed to resolve",
     "temporary failure in name resolution",
@@ -171,26 +177,12 @@ def _looks_like_bus_error(output: str) -> bool:
 
 
 def _build_file_logger(name: str, *, level: int) -> logging.Logger:
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
-    logger.propagate = False
-
-    target_path = os.path.abspath(BOT_LOG_FILE)
-    for handler in logger.handlers:
-        if isinstance(handler, logging.FileHandler) and getattr(handler, "baseFilename", "") == target_path:
-            handler.setLevel(level)
-            handler.setFormatter(logging.Formatter(BOT_LOG_FORMAT))
-            return logger
-
-    try:
-        handler = WatchedFileHandler(BOT_LOG_FILE)
-    except Exception:
-        return logger
-
-    handler.setLevel(level)
-    handler.setFormatter(logging.Formatter(BOT_LOG_FORMAT))
-    logger.addHandler(handler)
-    return logger
+    return build_file_logger(
+        name,
+        log_file=BOT_LOG_FILE,
+        log_format=BOT_LOG_FORMAT,
+        level=level,
+    )
 
 
 PAUSE_INFO_LOGGER = _build_file_logger("telegram_control_bot.pause", level=logging.INFO)
@@ -201,75 +193,12 @@ def _log_pause_info(message: str) -> None:
         PAUSE_INFO_LOGGER.info(message)
 
 
-def _contains_any_marker(error_text: str, markers: tuple[str, ...]) -> bool:
-    text = (error_text or "").lower()
-    return bool(text) and any(marker in text for marker in markers)
-
-
-def _is_max_retries_exceeded_error(error_text: str) -> bool:
-    return "max retries exceeded with url" in (error_text or "").lower()
-
-
-def _is_timeout_error(error_text: str) -> bool:
-    text = (error_text or "").lower()
-    if not text:
-        return False
-    markers = (
-        "timed out",
-        "read timeout",
-        "connect timeout",
-        "gateway timeout",
-        "gateway time-out",
-    )
-    if any(marker in text for marker in markers):
-        return True
-    return bool(re.search(r"\btime[ -]?out\b", text))
-
-
-def _is_dns_error(error_text: str) -> bool:
-    return _contains_any_marker(error_text, DNS_ERROR_MARKERS)
-
-
-def _is_connection_error(error_text: str) -> bool:
-    return _contains_any_marker(error_text, CONNECTION_ERROR_MARKERS)
-
-
-def _is_gateway_error(error_text: str) -> bool:
-    text = (error_text or "").lower()
-    return _contains_any_marker(text, GATEWAY_ERROR_MARKERS) or bool(HTTP_GATEWAY_STATUS_RX.search(text))
-
-
-def _is_tls_error(error_text: str) -> bool:
-    return _contains_any_marker(error_text, TLS_ERROR_MARKERS)
-
-
 def _describe_network_error(error_text: str) -> str:
-    if _is_max_retries_exceeded_error(error_text):
-        return "max retries exceeded"
-    if _is_timeout_error(error_text):
-        return "timeout"
-    if _is_dns_error(error_text):
-        return "dns/namensaufloesung"
-    if _is_gateway_error(error_text):
-        return "gateway"
-    if _is_tls_error(error_text):
-        return "ssl/tls"
-    if _is_connection_error(error_text):
-        return "verbindung"
-    return "netzwerk"
+    return describe_network_error(error_text)
 
 
 def _should_pause_polling(error_text: str) -> bool:
-    return any(
-        (
-            _is_max_retries_exceeded_error(error_text),
-            _is_timeout_error(error_text),
-            _is_dns_error(error_text),
-            _is_connection_error(error_text),
-            _is_gateway_error(error_text),
-            _is_tls_error(error_text),
-        )
-    )
+    return should_pause_on_network_error(error_text)
 
 
 def get_log_files() -> list[str]:
