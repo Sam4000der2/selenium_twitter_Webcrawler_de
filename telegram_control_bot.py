@@ -13,10 +13,21 @@ from mastodon_text_utils import split_mastodon_text
 from paths import BASE_DIR, DATA_FILE as DEFAULT_DATA_FILE, LOG_DIR as DEFAULT_LOG_DIR, LOG_FILE
 
 # Secrets aus ENV (global + local):
-#   telegram_token  -> Bot Token
-#   telegram_admin  -> Admin Chat-ID
-BOT_TOKEN = os.environ.get("telegram_token")
-admin_env = os.environ.get("telegram_admin")
+#   TELEGRAM_TOKEN / telegram_token  -> Bot Token
+#   TELEGRAM_ADMIN / telegram_admin  -> Admin Chat-ID
+def _get_env_with_legacy(*names: str) -> str | None:
+    for name in names:
+        raw = os.environ.get(name)
+        if raw is None:
+            continue
+        value = str(raw).strip()
+        if value:
+            return value
+    return None
+
+
+BOT_TOKEN = _get_env_with_legacy("TELEGRAM_TOKEN", "telegram_token")
+admin_env = _get_env_with_legacy("TELEGRAM_ADMIN", "telegram_admin")
 
 LOG_DIR = DEFAULT_LOG_DIR
 MAX_ARCHIVES = 3
@@ -133,9 +144,9 @@ TLS_ERROR_MARKERS = (
 HTTP_GATEWAY_STATUS_RX = re.compile(r"\b(?:502|503|504)\b")
 
 if not BOT_TOKEN:
-    logging.error("telegram_control_bot: ENV 'telegram_token' ist nicht gesetzt.")
+    logging.error("telegram_control_bot: ENV 'TELEGRAM_TOKEN/telegram_token' ist nicht gesetzt.")
 if admin is None:
-    logging.error("telegram_control_bot: ENV 'telegram_admin' ist nicht gesetzt oder keine gültige Zahl.")
+    logging.error("telegram_control_bot: ENV 'TELEGRAM_ADMIN/telegram_admin' ist nicht gesetzt oder keine gültige Zahl.")
 
 
 # ----------------------------
