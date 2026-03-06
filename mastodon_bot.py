@@ -91,8 +91,48 @@ LOG_PATH = LOG_FILE
 ALT_TEXT_LOG_PREFIX = "Alt-Text Generierung"
 GEMINI_HELPER_PREFIX = "gemini_helper"
 ALT_TEXT_FALLBACK = "Alt-Text konnte nicht automatisch generiert werden."
-MASTODON_VERSION_CACHE_MAX_AGE_SECONDS = int(
-    os.environ.get("MASTODON_VERSION_CACHE_MAX_AGE_SECONDS", str(7 * 24 * 60 * 60))
+_ENV_PARSE_WARNINGS: list[str] = []
+
+
+def _parse_int_env(
+    name: str,
+    default: int,
+    *,
+    min_value: int | None = None,
+    max_value: int | None = None,
+) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        _ENV_PARSE_WARNINGS.append(
+            f"mastodon_bot: Ungueltiger ENV-Wert '{name}={raw}', verwende Default {default}."
+        )
+        return default
+    if min_value is not None and value < min_value:
+        _ENV_PARSE_WARNINGS.append(
+            f"mastodon_bot: ENV '{name}' unter Minimum {min_value} ({value}), verwende {min_value}."
+        )
+        return min_value
+    if max_value is not None and value > max_value:
+        _ENV_PARSE_WARNINGS.append(
+            f"mastodon_bot: ENV '{name}' ueber Maximum {max_value} ({value}), verwende {max_value}."
+        )
+        return max_value
+    return value
+
+
+def _flush_env_parse_warnings() -> None:
+    while _ENV_PARSE_WARNINGS:
+        logging.warning(_ENV_PARSE_WARNINGS.pop(0))
+
+
+MASTODON_VERSION_CACHE_MAX_AGE_SECONDS = _parse_int_env(
+    "MASTODON_VERSION_CACHE_MAX_AGE_SECONDS",
+    7 * 24 * 60 * 60,
+    min_value=1,
 )
 MASTODON_QUOTE_MIN_VERSION = (4, 5, 0)
 QUOTE_POST_UNSUPPORTED_INSTANCES: set[str] = set()
@@ -151,7 +191,7 @@ instances = {
 
 EVENT_ENABLED = os.environ.get("MASTODON_CONTROL_EVENT_ENABLED", "1").lower() not in {"0", "false", "no"}
 EVENT_HOST = os.environ.get("MASTODON_CONTROL_EVENT_HOST", "127.0.0.1")
-EVENT_PORT = int(os.environ.get("MASTODON_CONTROL_EVENT_PORT", "8123"))
+EVENT_PORT = _parse_int_env("MASTODON_CONTROL_EVENT_PORT", 8123, min_value=1, max_value=65535)
 
 opnv_berlin = ["Servicemeldung", "SBahnBerlin"]
 opnv_toot = ["Servicemeldung", "VBB", "bpol", "polizeiberlin", "PolizeiBerlin", "Berliner_Fw", "VIP", "ODEG"]
@@ -170,8 +210,8 @@ EXHAUSTED_MODELS: dict[str, datetime] = {}
 print("Instances configured")
 
 MASTODON_MAX_CHARS = 500
-MASTODON_MIN_CONTENT_LEN = int(os.environ.get("MASTODON_MIN_CONTENT_LEN", "8"))
-MASTODON_FIRST_POST_MIN_CONTENT_LEN = int(os.environ.get("MASTODON_FIRST_POST_MIN_CONTENT_LEN", "80"))
+MASTODON_MIN_CONTENT_LEN = _parse_int_env("MASTODON_MIN_CONTENT_LEN", 8, min_value=1)
+MASTODON_FIRST_POST_MIN_CONTENT_LEN = _parse_int_env("MASTODON_FIRST_POST_MIN_CONTENT_LEN", 80, min_value=1)
 SEND_RETRY_DELAYS_SECONDS = [60, 120, 180]
 SEND_MAX_EXTRA_RETRIES = len(SEND_RETRY_DELAYS_SECONDS)
 INSTANCE_PAUSE_SECONDS = 15 * 60
@@ -180,9 +220,10 @@ INSTANCE_PAUSE_SECONDS = 15 * 60
 DEFAULT_NITTER_IMAGE_RETRY_HOSTS = {"nitter.net", "www.nitter.net"}
 MEDIA_BLOCKED_HOSTS = {"localhost", "localhost.localdomain"}
 MEDIA_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
-MEDIA_MAX_REDIRECTS = int(os.environ.get("MASTODON_MEDIA_MAX_REDIRECTS", "5"))
+MEDIA_MAX_REDIRECTS = _parse_int_env("MASTODON_MEDIA_MAX_REDIRECTS", 5, min_value=1)
 _MEDIA_TRUSTED_ORIGINS_RAW = os.environ.get("MASTODON_MEDIA_TRUSTED_ORIGINS")
 _MEDIA_TRUSTED_HTTP_ORIGINS_RAW = os.environ.get("MASTODON_MEDIA_TRUSTED_HTTP_ORIGINS")
+_flush_env_parse_warnings()
 
 
 def _parse_retry_delays(raw: str | None, fallback: list[int]) -> list[int]:
