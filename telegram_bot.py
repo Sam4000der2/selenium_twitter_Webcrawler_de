@@ -20,10 +20,21 @@ logging.basicConfig(
 )
 
 # Secrets aus ENV (global + local):
-#   telegram_token  -> Bot Token
-#   telegram_admin  -> Admin Chat-ID
-BOT_TOKEN = os.environ.get("telegram_token")
-admin_env = os.environ.get("telegram_admin")
+#   TELEGRAM_TOKEN / telegram_token  -> Bot Token
+#   TELEGRAM_ADMIN / telegram_admin  -> Admin Chat-ID
+def _get_env_with_legacy(*names: str) -> str | None:
+    for name in names:
+        raw = os.environ.get(name)
+        if raw is None:
+            continue
+        value = str(raw).strip()
+        if value:
+            return value
+    return None
+
+
+BOT_TOKEN = _get_env_with_legacy("TELEGRAM_TOKEN", "telegram_token")
+admin_env = _get_env_with_legacy("TELEGRAM_ADMIN", "telegram_admin")
 
 # Admin-Chat-ID robust parsen (Telegram liefert ints)
 try:
@@ -32,9 +43,9 @@ except Exception:
     admin = None
 
 if not BOT_TOKEN:
-    logging.error("telegram_bot: ENV 'telegram_token' ist nicht gesetzt.")
+    logging.error("telegram_bot: ENV 'TELEGRAM_TOKEN/telegram_token' ist nicht gesetzt.")
 if admin is None:
-    logging.error("telegram_bot: ENV 'telegram_admin' ist nicht gesetzt oder keine gültige Zahl.")
+    logging.error("telegram_bot: ENV 'TELEGRAM_ADMIN/telegram_admin' ist nicht gesetzt oder keine gültige Zahl.")
 
 
 _X_LINK_PREFIX = re.compile(r"(?i)\bhttps?://x\.com")
