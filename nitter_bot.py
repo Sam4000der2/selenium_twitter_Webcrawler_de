@@ -25,11 +25,31 @@ from paths import BASE_DIR as DEFAULT_BASE_DIR
 
 BASE_DIR = os.environ.get("BOTS_BASE_DIR", str(DEFAULT_BASE_DIR))
 LOG_PATH = os.path.join(BASE_DIR, "twitter_bot.log")
-POLL_INTERVAL = int(os.environ.get("NITTER_POLL_INTERVAL", "60"))
-HISTORY_LIMIT = int(os.environ.get("NITTER_HISTORY_LIMIT", "200"))
-MAX_ITEM_AGE_SECONDS = max(
-    0, int(os.environ.get("NITTER_MAX_ITEM_AGE_SECONDS", str(2 * 60 * 60)))
-)
+_ENV_PARSE_WARNINGS: list[str] = []
+
+
+def _parse_int_env(name: str, default: int, *, min_value: int | None = None) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        _ENV_PARSE_WARNINGS.append(
+            f"nitter_bot: Ungueltiger ENV-Wert '{name}={raw}', verwende Default {default}."
+        )
+        return default
+    if min_value is not None and value < min_value:
+        _ENV_PARSE_WARNINGS.append(
+            f"nitter_bot: ENV '{name}' unter Minimum {min_value} ({value}), verwende {min_value}."
+        )
+        return min_value
+    return value
+
+
+POLL_INTERVAL = _parse_int_env("NITTER_POLL_INTERVAL", 60, min_value=1)
+HISTORY_LIMIT = _parse_int_env("NITTER_HISTORY_LIMIT", 200, min_value=1)
+MAX_ITEM_AGE_SECONDS = _parse_int_env("NITTER_MAX_ITEM_AGE_SECONDS", 2 * 60 * 60, min_value=0)
 
 DEFAULT_INTERVAL = 15 * 60  # Sekunden
 USER_OVERRIDES = {
@@ -84,6 +104,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
 )
+for _warning in _ENV_PARSE_WARNINGS:
+    logging.warning(_warning)
 
 def parse_time(value: str | None) -> dtime | None:
     if not value:

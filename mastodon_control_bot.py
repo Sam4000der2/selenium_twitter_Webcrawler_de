@@ -18,8 +18,41 @@ from paths import BASE_DIR, LOG_FILE
 # ----------------------------
 # Konstanten / Pfade
 # ----------------------------
-# Serverseitiges Rate-Limit vermeiden: Minimum 5s, Default 90s (Empfehlung)
-POLL_INTERVAL_SEC = max(5, int(os.environ.get("MASTODON_CONTROL_POLL_INTERVAL", "180")))
+_ENV_PARSE_WARNINGS: list[str] = []
+
+
+def _parse_int_env(
+    name: str,
+    default: int,
+    *,
+    min_value: int | None = None,
+    max_value: int | None = None,
+) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        _ENV_PARSE_WARNINGS.append(
+            f"mastodon_control_bot: Ungueltiger ENV-Wert '{name}={raw}', verwende Default {default}."
+        )
+        return default
+    if min_value is not None and value < min_value:
+        _ENV_PARSE_WARNINGS.append(
+            f"mastodon_control_bot: ENV '{name}' unter Minimum {min_value} ({value}), verwende {min_value}."
+        )
+        return min_value
+    if max_value is not None and value > max_value:
+        _ENV_PARSE_WARNINGS.append(
+            f"mastodon_control_bot: ENV '{name}' ueber Maximum {max_value} ({value}), verwende {max_value}."
+        )
+        return max_value
+    return value
+
+
+# Serverseitiges Rate-Limit vermeiden: Minimum 5s, Default 180s
+POLL_INTERVAL_SEC = _parse_int_env("MASTODON_CONTROL_POLL_INTERVAL", 180, min_value=5)
 
 # Gleiche Instanzen wie mastodon_bot
 INSTANCES = {
@@ -64,7 +97,7 @@ BERLIN_TZ = ZoneInfo("Europe/Berlin")
 
 # Event-Bridge vom mastodon_bot
 EVENT_HOST = os.environ.get("MASTODON_CONTROL_EVENT_HOST", "127.0.0.1")
-EVENT_PORT = int(os.environ.get("MASTODON_CONTROL_EVENT_PORT", "8123"))
+EVENT_PORT = _parse_int_env("MASTODON_CONTROL_EVENT_PORT", 8123, min_value=1, max_value=65535)
 EVENT_ENABLED = os.environ.get("MASTODON_CONTROL_EVENT_ENABLED", "1").lower() not in {"0", "false", "no"}
 BOT_LOG_FORMAT = "%(asctime)s %(levelname)s:%(message)s"
 
@@ -141,6 +174,8 @@ def setup_logging():
     except Exception:
         # Falls das zentrale Log nicht schreibbar ist, nicht crashen
         pass
+    for warning in _ENV_PARSE_WARNINGS:
+        logging.warning(warning)
 
 
 setup_logging()
