@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+umask 077
 
 BASE_DIR="${BOTS_BASE_DIR:-$(cd "$(dirname "$0")" && pwd)}"
 LOGFILE="${BOT_LOG_FILE:-$BASE_DIR/twitter_bot.log}"
@@ -21,8 +22,9 @@ mkdir -p "$(dirname "$LOGFILE")"
 
 if [ -f "$LOGFILE" ]; then
     mv "$LOGFILE" "$ARCHIVED_LOG"
+    chmod 600 "$ARCHIVED_LOG"
 fi
 
-install -m 644 /dev/null "$LOGFILE"
+install -m 600 /dev/null "$LOGFILE"
 
 find "$LOGDIR" -type f -name "twitter_bot.log.*" -mtime +14 -delete
