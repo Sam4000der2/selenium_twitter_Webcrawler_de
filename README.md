@@ -4,8 +4,8 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 
 ## Wichtige Hinweise
 - Keine Snap-Pakete nutzen (Selenium + Snap machen Probleme); Firefox via Flatpak ist nicht getestet, Chrome ist möglich aber instabiler.
-- Twitter/X-Listen brauchen in der Regel einen eingeloggten Account. Nutze ein Firefox-Profil (`about:profiles`) und passe `firefox_profile_path` an. Falls die Zielseite öffentlich ist, kannst du ohne Login arbeiten, indem du die Profil-Zuweisung im Code entfernst (Profile-Zeilen auskommentieren).
-- Geckodriver muss verfügbar sein (`/usr/local/bin/geckodriver` voreingestellt). Falls Selenium ihn nicht automatisch findet, manuell installieren/kopieren.
+- Twitter/X-Listen brauchen in der Regel einen eingeloggten Account. Nutze ein Firefox-Profil (`about:profiles`) und setze optional `TWITTER_FIREFOX_PROFILE_PATH`. Falls die Zielseite öffentlich ist, kannst du ohne Login arbeiten.
+- Geckodriver muss verfügbar sein (Default `/usr/local/bin/geckodriver`). Bei abweichendem Pfad setze `TWITTER_GECKODRIVER_PATH`.
 - Bestehende TXT/CSV/JSON-State-Dateien müssen in die neue DB (`nitter_bot.db`) migriert werden; ein separates Migrationsskript folgt.
 
 ## Komponenten
@@ -24,11 +24,12 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   `export BOTS_BASE_DIR="$(pwd)" && python3 -m venv "$BOTS_BASE_DIR/venv" && source "$BOTS_BASE_DIR/venv/bin/activate"`
 - Abhängigkeiten installieren (im Ordner `bots/`):  
   `pip install -r requirements.txt`
-- Firefox + Geckodriver (in `twitter_bot.py` aktuell `/usr/local/bin/geckodriver`). Nutze ein eingeloggtes Firefox-Profil für X (`firefox_profile_path`).
+- Firefox + Geckodriver (Default-Pfad `/usr/local/bin/geckodriver`; optional ENV `TWITTER_GECKODRIVER_PATH`). Für eingeloggte X-Sessions optional `TWITTER_FIREFOX_PROFILE_PATH` setzen.
 - Netz- und API-Zugänge per Environment:
   - Telegram: `telegram_token`, `telegram_admin`
   - Mastodon: `opnv_berlin`, `opnv_toot`, `opnv_mastodon`
   - Gemini: `GEMINI_API_KEY` (optional zusätzlich: `GEMINI_API_KEY1` bis `GEMINI_API_KEY4` für Round-Robin)
+  - Twitter/Selenium: `TWITTER_LIST_URL`, `TWITTER_GECKODRIVER_PATH`, optional `TWITTER_FIREFOX_PROFILE_PATH`
   - Optional: `MASTODON_CONTROL_EVENT_ENABLED|HOST|PORT`, `MASTODON_CONTROL_POLL_INTERVAL`
 
 > Hinweis: Laufzeitpfade werden zentral über `BOTS_BASE_DIR` gesteuert (Default: Repo-Ordner).  
@@ -36,11 +37,11 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 
 ## Konfiguration
 - **Twitter/X-Scraper (`twitter_bot.py`)**
-  - `twitter_link` auf die gewünschte Liste/Account setzen.
-  - Firefox-Profil (`firefox_profile_path`) und Geckodriver-Pfad konfigurieren. Läuft headless und pollt alle 60 s.
+  - Quell-Liste per `TWITTER_LIST_URL` konfigurieren (Fallback: interner Default).
+  - Firefox-Profil optional über `TWITTER_FIREFOX_PROFILE_PATH`, Geckodriver über `TWITTER_GECKODRIVER_PATH` (Default `/usr/local/bin/geckodriver`).
   - Neue Links werden in `nitter_bot.db` dedupliziert; `var_href` wird beim Telegram-Versand auf `nitter.net` umgeschrieben.
   - Kurz-URLs werden erweitert; Bilder/Videos und externe Links gehen an Mastodon weiter.
-  - Optional ohne Login: Profil-Zuweisung in `twitter_bot.py` auskommentieren (siehe Hinweise oben).
+  - Optional ohne Login: `TWITTER_FIREFOX_PROFILE_PATH` nicht setzen.
 
 - **Nitter-RSS (`nitter_bot.py`)**
   - Arbeitet gegen `NITTER_BASE_URL` (Standard `http://localhost:8081`) und liest Accounts samt Intervallen/Zeitfenstern aus der DB (Default-Seed wie bisher).
@@ -91,6 +92,9 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   opnv_berlin=...
   opnv_toot=...
   opnv_mastodon=...
+  TWITTER_LIST_URL=https://x.com/i/lists/...
+  TWITTER_GECKODRIVER_PATH=/usr/local/bin/geckodriver
+  TWITTER_FIREFOX_PROFILE_PATH=/home/<user>/.mozilla/firefox/<profile>.Twitter
   ```
 - Env-File anlegen (für Service und lokale Tests) mit restriktiven Rechten:  
   ```bash
@@ -107,6 +111,9 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   opnv_berlin=TOKEN
   opnv_toot=TOKEN
   opnv_mastodon=TOKEN
+  TWITTER_LIST_URL=https://x.com/i/lists/1901917316708778158
+  TWITTER_GECKODRIVER_PATH=/usr/local/bin/geckodriver
+  TWITTER_FIREFOX_PROFILE_PATH=/home/<user>/.mozilla/firefox/<profile>.Twitter
   EOF
   sudo chmod 600 /etc/twitter_bot.env
   ```
