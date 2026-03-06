@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 *.log
+*.log.*
 .pytest_cache/
 .mypy_cache/
 venv/
@@ -8,3 +9,4 @@ venc/
 .env
 .DS_Store
 data.json
+logs/
