@@ -10,7 +10,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 
 ## Komponenten
 - `twitter_bot.py`: Selenium-Scraper für eine X-Liste. Nutzt ein lokales Firefox-Profil, dedupliziert über die gemeinsame SQLite-DB `nitter_bot.db` und sendet neue Tweets an Telegram und Mastodon.
-- `nitter_bot.py`: Pollt die lokale Nitter-Instanz (`http://localhost:8080/<user>/rss`) statt Selenium/X. History und Nutzer-Intervalle liegen in `nitter_bot.db` und sollen den Twitter-Bot langfristig ersetzen.
+- `nitter_bot.py`: Pollt die lokale Nitter-Instanz (`http://localhost:8081/<user>/rss`) statt Selenium/X. History und Nutzer-Intervalle liegen in `nitter_bot.db` und sollen den Twitter-Bot langfristig ersetzen.
 - `bsky_feed_monitor.py`: Pollt konfigurierte Bluesky-RSS-Feeds (z. B. VIZ Berlin) und leitet neue Einträge an Telegram/Mastodon weiter.
 - `telegram_bot.py`: Versendet Tweets/Feeds an alle in der DB hinterlegten Chats. Filterwörter pro Chat bestimmen, was zugestellt wird.
 - `telegram_control_bot.py`: Telegram-Bot zur Verwaltung von Chat-IDs und Filtern (`/start`, `/status`, `/addfilterrules`, `/deletefilterrules`, `/deleteallrules`, `/list`, `/about`, `/datenschutz`). Admin-Kommandos erlauben Service-Meldungen an alle Kanäle und Log-Auszüge.
@@ -43,7 +43,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   - Optional ohne Login: Profil-Zuweisung in `twitter_bot.py` auskommentieren (siehe Hinweise oben).
 
 - **Nitter-RSS (`nitter_bot.py`)**
-  - Arbeitet gegen `NITTER_BASE_URL` (Standard `http://localhost:8080`) und liest Accounts samt Intervallen/Zeitfenstern aus der DB (Default-Seed wie bisher).
+  - Arbeitet gegen `NITTER_BASE_URL` (Standard `http://localhost:8081`) und liest Accounts samt Intervallen/Zeitfenstern aus der DB (Default-Seed wie bisher).
   - Default-Poll: 15 Minuten (900 s); `SBahnBerlin` ist per Seed mit 120 s von 05:55–22:05 hinterlegt.
   - Dedupliziert per DB-History und baut die Status-Links zu `x.com/<user>/status/<id>` für Telegram/Mastodon.
   - History-Limit per `NITTER_HISTORY_LIMIT` einstellbar; `NITTER_POLL_INTERVAL` steuert das Loop-Fallback-Sleep (min. 15 s).
