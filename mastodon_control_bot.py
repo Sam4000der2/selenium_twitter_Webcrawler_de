@@ -1233,13 +1233,16 @@ async def _handle_event_connection(reader: asyncio.StreamReader, writer: asyncio
             pass
 
 
-async def start_event_listener():
+async def start_event_listener(*, required: bool = False):
     if not EVENT_ENABLED:
         return
     try:
         server = await asyncio.start_server(_handle_event_connection, host=EVENT_HOST, port=EVENT_PORT)
     except Exception as e:
-        logging.warning(f"mastodon_control_bot: Event-Listener konnte nicht gestartet werden: {e}")
+        message = f"mastodon_control_bot: Event-Listener konnte nicht gestartet werden: {e}"
+        if required:
+            raise RuntimeError(message) from e
+        logging.warning(message)
         return
 
     async with server:
@@ -2398,9 +2401,6 @@ async def _run_instance(instance_name: str, cfg: dict):
 
 async def start_bot():
     state_store.prune_mastodon_instance_pauses()
-    tasks = []
-    if EVENT_ENABLED:
-        tasks.append(asyncio.create_task(start_event_listener()))
     configured_instances = []
     for name, cfg in INSTANCES.items():
         token_env = cfg.get("access_token_env") or ""
@@ -2413,15 +2413,20 @@ async def start_bot():
                 token_env,
             )
 
-    for name, cfg in configured_instances:
-        tasks.append(asyncio.create_task(_run_instance(name, cfg)))
-
     if not configured_instances and not EVENT_ENABLED:
         logging.error(
             "mastodon_control_bot: Start abgebrochen – keine Instanz-Tokens gesetzt "
             "und Event-Listener deaktiviert."
         )
         raise SystemExit(2)
+
+    tasks = []
+    for name, cfg in configured_instances:
+        tasks.append(asyncio.create_task(_run_instance(name, cfg)))
+
+    if EVENT_ENABLED:
+        event_only_mode = not configured_instances
+        tasks.append(asyncio.create_task(start_event_listener(required=event_only_mode)))
 
     if not tasks:
         logging.warning("mastodon_control_bot: Keine Instanz-Tasks gestartet.")
