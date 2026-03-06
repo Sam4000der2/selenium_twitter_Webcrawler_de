@@ -261,7 +261,6 @@ async def main(new_tweets):
             content = replace_x_links_with_nitter(tweet['content'])
             posted_time = tweet['posted_time']
             var_href = replace_x_links_with_nitter(tweet['var_href'])
-            images = tweet['images']
             extern_urls_as_string = replace_x_links_with_nitter(tweet['extern_urls_as_string'])
 
             message = (

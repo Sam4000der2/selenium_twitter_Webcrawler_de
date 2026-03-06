@@ -792,7 +792,6 @@ async def status_command(bot, chat_id: int, admin_view: bool = False):
       - Fehlergruppen (distinct)
       - Auslösungen (Summe)
     """
-    include_warnings = admin_view
     try:
         twitter_state, _ = get_service_state(
             "twitter_bot.service",
@@ -1220,7 +1219,7 @@ async def admin_help(bot, chat_id):
     help_text += f"/errors (oder /error oder /fehler) zeigt die letzten 3 ERROR je Gruppe (letzte {ADMIN_ERRORS_DAYS} Tage)\n\n"
     help_text += f"/warnung (oder /warnungen /warn /warning) zeigt die letzten 3 WARNINGS je Gruppe (letzte {ADMIN_ERRORS_DAYS} Tage)\n\n"
     help_text += f"/info zeigt die letzten 3 INFO Meldungen je Gruppe (letzte {ADMIN_ERRORS_DAYS} Tage)\n\n"
-    help_text += f"/archiv zeigt den Inhalt spezifscher Logdateien an. Kurz /archiv <index> <error|warning|info|all>"
+    help_text += "/archiv zeigt den Inhalt spezifscher Logdateien an. Kurz /archiv <index> <error|warning|info|all>"
     try:
         await bot.send_message(chat_id=chat_id, text=help_text)
     except Exception as e:

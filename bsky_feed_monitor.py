@@ -286,7 +286,6 @@ def check_all_feeds(debug: bool = False):
             logging.info(f"- {len(new_entries)} neue Einträge für {feed_config['name']} gefunden")
 
             for entry in new_entries:
-                formatted_entry = format_entry(entry)
                 user = entry["feed_name"].replace(' ', '_')
                 description = clean_description(entry.get("description", ""))
                 posted_time = format_post_date(entry.get("pubDate", ""))  # Zeitformatierung vornehmen
