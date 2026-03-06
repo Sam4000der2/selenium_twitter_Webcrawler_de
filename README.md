@@ -4,7 +4,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 
 ## Wichtige Hinweise
 - Keine Snap-Pakete nutzen (Selenium + Snap machen Probleme); Firefox via Flatpak ist nicht getestet, Chrome ist möglich aber instabiler.
-- Twitter/X-Listen brauchen in der Regel einen eingeloggten Account. Nutze ein Firefox-Profil (`about:profiles`) und passe `firefox_profile_path` an. Falls die Zielseite öffentlich ist, kannst du ohne Login arbeiten, indem du das Profil im Code entfernst (Profile-Zeilen auskommentieren) und optional `delete_temp_files` deaktivierst.
+- Twitter/X-Listen brauchen in der Regel einen eingeloggten Account. Nutze ein Firefox-Profil (`about:profiles`) und passe `firefox_profile_path` an. Falls die Zielseite öffentlich ist, kannst du ohne Login arbeiten, indem du die Profil-Zuweisung im Code entfernst (Profile-Zeilen auskommentieren).
 - Geckodriver muss verfügbar sein (`/usr/local/bin/geckodriver` voreingestellt). Falls Selenium ihn nicht automatisch findet, manuell installieren/kopieren.
 - Bestehende TXT/CSV/JSON-State-Dateien müssen in die neue DB (`nitter_bot.db`) migriert werden; ein separates Migrationsskript folgt.
 
@@ -31,7 +31,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   - Gemini: `GEMINI_API_KEY` (optional zusätzlich: `GEMINI_API_KEY1` bis `GEMINI_API_KEY4` für Round-Robin)
   - Optional: `MASTODON_CONTROL_EVENT_ENABLED|HOST|PORT`, `MASTODON_CONTROL_POLL_INTERVAL`
 
-> Hinweis: Alle Skripte verwenden absolute Pfade auf `/home/sascha/bots/…`. Wenn das Repo anders liegt, passe die Konstanten (`firefox_profile_path`, `geckodriver_path`, `filename`, `DATA_FILE`, `RULES_FILE`, Log-Pfade) in den Skripten an.
+> Hinweis: Alle Skripte verwenden absolute Pfade auf `/home/sascha/bots/…`. Wenn das Repo anders liegt, passe die Pfad-Konstanten (`firefox_profile_path`, `geckodriver_path`, `DATA_FILE`, DB-/Log-Pfade) in den Skripten an.
   Die SQLite-DB kann über `NITTER_DB_PATH` umgezogen werden (Standard `/home/sascha/bots/nitter_bot.db`).
 
 ## Konfiguration
@@ -40,7 +40,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   - Firefox-Profil (`firefox_profile_path`) und Geckodriver-Pfad konfigurieren. Läuft headless und pollt alle 60 s.
   - Neue Links werden in `nitter_bot.db` dedupliziert; `var_href` wird beim Telegram-Versand auf `nitter.net` umgeschrieben.
   - Kurz-URLs werden erweitert; Bilder/Videos und externe Links gehen an Mastodon weiter.
-  - Optional ohne Login: Profil-Zuweisung in `twitter_bot.py` auskommentieren und `delete_temp_files` deaktivieren (siehe Hinweise oben).
+  - Optional ohne Login: Profil-Zuweisung in `twitter_bot.py` auskommentieren (siehe Hinweise oben).
 
 - **Nitter-RSS (`nitter_bot.py`)**
   - Arbeitet gegen `NITTER_BASE_URL` (Standard `http://localhost:8080`) und liest Accounts samt Intervallen/Zeitfenstern aus der DB (Default-Seed wie bisher).
