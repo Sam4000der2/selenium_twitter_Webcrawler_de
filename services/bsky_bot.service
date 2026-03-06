@@ -1,6 +1,7 @@
 [Unit]
 Description=bsky_bot
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 EnvironmentFile=/etc/twitter_bot.env
