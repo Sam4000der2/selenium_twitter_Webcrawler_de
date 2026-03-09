@@ -1,16 +1,12 @@
 import asyncio
 import os
 import telegram
-import json
 import logging
 from logging.handlers import WatchedFileHandler
 import re
 import time
 import state_store
-from paths import DATA_FILE as DEFAULT_DATA_FILE, LOG_FILE
-
-# DATA_FILE = 'data.json'
-DATA_FILE = DEFAULT_DATA_FILE
+from paths import LOG_FILE
 
 # Configure logging
 logging.basicConfig(
@@ -105,38 +101,24 @@ def replace_x_links_with_nitter(text: str) -> str:
 
 def load_data():
     try:
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, 'r', encoding='utf-8') as file:
-                data = read_json_to_dict(file)
-                return data if data is not None else []
-        else:
-            return []
+        data = state_store.load_telegram_data()
+        chat_ids = data.get("chat_ids", {}) if isinstance(data, dict) else {}
+        filter_rules = data.get("filter_rules", {}) if isinstance(data, dict) else {}
+        data_rows = []
+        for chat_id_raw in (chat_ids or {}).keys():
+            try:
+                chat_id = int(chat_id_raw)
+            except Exception:
+                continue
+            keywords_raw = filter_rules.get(str(chat_id_raw), filter_rules.get(str(chat_id), []))
+            if not isinstance(keywords_raw, list):
+                keywords_raw = []
+            keywords = [str(keyword).strip() for keyword in keywords_raw if str(keyword).strip()]
+            data_rows.append({"chat_id": chat_id, "keywords": keywords})
+        return data_rows
     except Exception as e:
         logging.error(f"telegram_bot: Fehler in def load_data: {e}")
         return []
-
-
-def read_json_to_dict(json_file):
-    data_dict = []
-    try:
-        json_data = json_file.read()
-        if not json_data or not json_data.strip():
-            return []
-        data = json.loads(json_data)
-
-        chat_ids = data.get("chat_ids", {})
-        filter_rules = data.get("filter_rules", {})
-
-        for chat_id, keywords in filter_rules.items():
-            if chat_id in chat_ids:
-                entry = {"chat_id": int(chat_id), "keywords": keywords}
-                data_dict.append(entry)
-    except json.JSONDecodeError as e:
-        logging.error(f"telegram_bot: Ungültige JSON in {DATA_FILE}: {e}")
-    except Exception as e:
-        logging.error(f"telegram_bot: Fehler in def read_json_to_dict: {e}")
-
-    return data_dict
 
 
 def _build_retry_payload(chat_id: int, message: str) -> dict:

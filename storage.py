@@ -30,12 +30,26 @@ def init_db():
     with get_connection() as conn:
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS telegram_filters (
+            CREATE TABLE IF NOT EXISTS telegram_chats (
                 chat_id INTEGER PRIMARY KEY,
-                keywords TEXT NOT NULL DEFAULT '[]',
+                enabled INTEGER NOT NULL DEFAULT 1,
                 updated_at INTEGER NOT NULL
             )
             """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS telegram_filter_rules (
+                chat_id INTEGER NOT NULL,
+                keyword TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+                -- Composite PK verhindert doppelte Regeln je Chat.
+                ,PRIMARY KEY (chat_id, keyword)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_filter_rules_chat_id ON telegram_filter_rules(chat_id)"
         )
         conn.execute(
             """
@@ -170,6 +184,7 @@ def init_db():
             )
             """
         )
+        _migrate_legacy_telegram_filters(conn)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_masto_created ON mastodon_posts(created_at)")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_failed_deliveries_due ON failed_deliveries(channel, status, next_retry_at)"
@@ -192,20 +207,101 @@ def _json_loads(raw: str, default: Any):
         return default
 
 
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+        (table_name,),
+    ).fetchone()
+    return bool(row)
+
+
+def _migrate_legacy_telegram_filters(conn: sqlite3.Connection):
+    """
+    Migriert Legacy-Telegramdaten aus `telegram_filters` (keywords als JSON-Blob)
+    in normalisierte Tabellen.
+    """
+    if not _table_exists(conn, "telegram_filters"):
+        return
+
+    target_rows = conn.execute("SELECT COUNT(*) FROM telegram_chats").fetchone()
+    target_count = int(target_rows[0] or 0) if target_rows else 0
+    if target_count > 0:
+        # Neue Struktur bereits befüllt -> Legacy-Tabelle nur aufräumen.
+        conn.execute("DROP TABLE telegram_filters")
+        return
+
+    legacy_rows = conn.execute("SELECT chat_id, keywords FROM telegram_filters").fetchall()
+    if not legacy_rows:
+        conn.execute("DROP TABLE telegram_filters")
+        return
+
+    ts = _now()
+    for chat_id_raw, keywords_raw in legacy_rows:
+        try:
+            chat_id = int(chat_id_raw)
+        except Exception:
+            continue
+
+        conn.execute(
+            "INSERT OR REPLACE INTO telegram_chats (chat_id, enabled, updated_at) VALUES (?, 1, ?)",
+            (chat_id, ts),
+        )
+        keywords = _json_loads(keywords_raw or "[]", [])
+        if not isinstance(keywords, list):
+            keywords = []
+        for keyword in keywords:
+            kw = str(keyword or "").strip()
+            if not kw:
+                continue
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO telegram_filter_rules (chat_id, keyword, updated_at)
+                VALUES (?, ?, ?)
+                """,
+                (chat_id, kw, ts),
+            )
+
+    conn.execute("DROP TABLE telegram_filters")
+
+
 # Telegram
 def _read_telegram() -> Dict[str, Any]:
     with get_connection() as conn:
-        rows = conn.execute("SELECT chat_id, keywords FROM telegram_filters").fetchall()
+        chat_rows = conn.execute(
+            "SELECT chat_id FROM telegram_chats WHERE enabled = 1 ORDER BY chat_id"
+        ).fetchall()
+        rule_rows = conn.execute(
+            "SELECT chat_id, keyword FROM telegram_filter_rules ORDER BY chat_id, rowid"
+        ).fetchall()
     chat_ids = {}
     filter_rules = {}
-    for chat_id, keywords_raw in rows:
-        try:
-            keywords = _json_loads(keywords_raw, [])
-        except Exception:
-            keywords = []
-        chat_ids[str(chat_id)] = chat_id
-        filter_rules[str(chat_id)] = keywords if isinstance(keywords, list) else []
+    for (chat_id_raw,) in chat_rows:
+        chat_id = str(int(chat_id_raw))
+        chat_ids[chat_id] = True
+    for chat_id_raw, keyword_raw in rule_rows:
+        chat_id = str(int(chat_id_raw))
+        filter_rules.setdefault(chat_id, [])
+        keyword = str(keyword_raw or "").strip()
+        if keyword:
+            filter_rules[chat_id].append(keyword)
     return {"chat_ids": chat_ids, "filter_rules": filter_rules}
+
+
+def _coerce_chat_id(chat_id_key: Any, chat_id_value: Any) -> int | None:
+    candidates = [chat_id_key, chat_id_value]
+    for raw in candidates:
+        if raw is None:
+            continue
+        text = str(raw).strip()
+        if not text:
+            continue
+        if text.lower() in {"true", "false"}:
+            continue
+        try:
+            return int(text)
+        except Exception:
+            continue
+    return None
 
 
 def _write_telegram(data: Dict[str, Any]):
@@ -213,14 +309,35 @@ def _write_telegram(data: Dict[str, Any]):
     filter_rules = data.get("filter_rules", {}) if isinstance(data, dict) else {}
     ts = _now()
     with get_connection() as conn:
-        conn.execute("DELETE FROM telegram_filters")
-        for chat_id_str, cid in chat_ids.items():
-            chat_id = int(cid)
-            keywords = filter_rules.get(str(chat_id_str), [])
+        conn.execute("DELETE FROM telegram_filter_rules")
+        conn.execute("DELETE FROM telegram_chats")
+        for chat_id_key, chat_id_val in (chat_ids or {}).items():
+            chat_id = _coerce_chat_id(chat_id_key, chat_id_val)
+            if chat_id is None:
+                continue
             conn.execute(
-                "INSERT OR REPLACE INTO telegram_filters (chat_id, keywords, updated_at) VALUES (?, ?, ?)",
-                (chat_id, _json_dumps(keywords), ts),
+                "INSERT OR REPLACE INTO telegram_chats (chat_id, enabled, updated_at) VALUES (?, 1, ?)",
+                (chat_id, ts),
             )
+        for chat_id_key, keywords in (filter_rules or {}).items():
+            chat_id = _coerce_chat_id(chat_id_key, None)
+            if chat_id is None:
+                continue
+            if not isinstance(keywords, list):
+                keywords = []
+            seen_keywords: set[str] = set()
+            for keyword_raw in keywords:
+                keyword = str(keyword_raw or "").strip()
+                if not keyword or keyword in seen_keywords:
+                    continue
+                seen_keywords.add(keyword)
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO telegram_filter_rules (chat_id, keyword, updated_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (chat_id, keyword, ts),
+                )
         conn.commit()
 
 

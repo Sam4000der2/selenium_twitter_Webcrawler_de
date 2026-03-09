@@ -2,20 +2,20 @@ import telegram_bot
 import mastodon_bot
 import asyncio
 import os
-import json
 import telegram
 from datetime import datetime, timedelta
 import logging
 from logging.handlers import WatchedFileHandler
 import subprocess
 import re
+import state_store
 from control_bot_utils import (
     build_file_logger,
     describe_network_error,
     should_pause_on_network_error,
 )
 from mastodon_text_utils import split_mastodon_text
-from paths import BASE_DIR, DATA_FILE as DEFAULT_DATA_FILE, LOG_DIR as DEFAULT_LOG_DIR, LOG_FILE
+from paths import BASE_DIR, LOG_DIR as DEFAULT_LOG_DIR, LOG_FILE
 
 # Secrets aus ENV (global + local):
 #   TELEGRAM_TOKEN / telegram_token  -> Bot Token
@@ -51,9 +51,6 @@ logging.basicConfig(
     level=logging.WARNING,
     format=BOT_LOG_FORMAT
 )
-
-# Dateiname für Chat-IDs und Filterregeln
-DATA_FILE = DEFAULT_DATA_FILE
 
 # Zentrales Bot-Logfile (alle Module schreiben hier rein)
 BOT_LOG_FILE = LOG_FILE
@@ -104,7 +101,6 @@ BUS_ERROR_MARKERS = (
 # Zeitstempel am Anfang der Zeile
 TS_RX = re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+(?P<rest>.*)$")
 
-<<<<<<< HEAD
 DNS_ERROR_MARKERS = (
     "failed to resolve",
     "temporary failure in name resolution",
@@ -958,24 +954,16 @@ async def admin_infos_command(bot, chat_id: int):
 # ----------------------------
 
 def load_data():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, 'r') as file:
-                return json.load(file)
-        except Exception as e:
-            logging.error(f"telegram_control_bot: Error loading data: {e}")
-            return {"chat_ids": {}, "filter_rules": {}}
-    else:
+    try:
+        return state_store.load_telegram_data()
+    except Exception as e:
+        logging.error(f"telegram_control_bot: Error loading data: {e}")
         return {"chat_ids": {}, "filter_rules": {}}
 
 
 def save_data(data):
-    if not os.path.exists(DATA_FILE):
-        open(DATA_FILE, "a").close()
-
     try:
-        with open(DATA_FILE, 'w') as file:
-            json.dump(data, file)
+        state_store.save_telegram_data(data if isinstance(data, dict) else {"chat_ids": {}, "filter_rules": {}})
     except Exception as e:
         logging.error(f"telegram_control_bot: Error saving data: {e}")
 

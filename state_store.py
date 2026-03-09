@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from typing import Any, Dict, Iterable, List
 
 import storage
+from paths import DATA_FILE as DEFAULT_DATA_FILE
 
 TELEGRAM_BUCKET = "telegram_config"
 TELEGRAM_KEY = "chat_config"
@@ -32,21 +34,84 @@ MASTODON_PAUSE_CONSUMERS = {"mastodon_bot", "mastodon_control_bot"}
 
 LIVE_LOG_RETENTION_DAYS = 7
 ARCHIVE_LOG_RETENTION_DAYS = 90
+_TELEGRAM_FILE_MIGRATION_CHECKED = False
+
+
+def _normalize_telegram_payload(data: Any) -> Dict[str, Any]:
+    if not isinstance(data, dict):
+        return {"chat_ids": {}, "filter_rules": {}}
+
+    raw_chat_ids = data.get("chat_ids", {})
+    raw_filter_rules = data.get("filter_rules", {})
+
+    chat_ids: dict[str, bool] = {}
+    if isinstance(raw_chat_ids, dict):
+        for chat_id, enabled in raw_chat_ids.items():
+            chat_key = str(chat_id).strip()
+            if not chat_key:
+                continue
+            if bool(enabled):
+                chat_ids[chat_key] = True
+
+    filter_rules: dict[str, list[str]] = {}
+    if isinstance(raw_filter_rules, dict):
+        for chat_id, keywords in raw_filter_rules.items():
+            chat_key = str(chat_id).strip()
+            if not chat_key:
+                continue
+            if not isinstance(keywords, list):
+                continue
+            normalized_keywords: list[str] = []
+            for keyword in keywords:
+                kw = str(keyword or "").strip()
+                if kw:
+                    normalized_keywords.append(kw)
+            if normalized_keywords:
+                filter_rules[chat_key] = normalized_keywords
+
+    return {"chat_ids": chat_ids, "filter_rules": filter_rules}
+
+
+def migrate_telegram_json_to_db(data_file: str | None = None) -> bool:
+    path = data_file or DEFAULT_DATA_FILE
+    if not path or not os.path.exists(path):
+        return False
+
+    current = storage.read_value(TELEGRAM_BUCKET, TELEGRAM_KEY, {"chat_ids": {}, "filter_rules": {}})
+    current_norm = _normalize_telegram_payload(current)
+    if current_norm["chat_ids"] or current_norm["filter_rules"]:
+        return False
+
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except Exception:
+        return False
+
+    normalized = _normalize_telegram_payload(raw)
+    if not normalized["chat_ids"] and not normalized["filter_rules"]:
+        return False
+
+    storage.write_value(TELEGRAM_BUCKET, TELEGRAM_KEY, normalized)
+    return True
+
+
+def _ensure_telegram_file_migration_checked():
+    global _TELEGRAM_FILE_MIGRATION_CHECKED
+    if _TELEGRAM_FILE_MIGRATION_CHECKED:
+        return
+    migrate_telegram_json_to_db()
+    _TELEGRAM_FILE_MIGRATION_CHECKED = True
 
 
 def load_telegram_data() -> Dict[str, Any]:
+    _ensure_telegram_file_migration_checked()
     data = storage.read_value(TELEGRAM_BUCKET, TELEGRAM_KEY, {"chat_ids": {}, "filter_rules": {}})
-    if not isinstance(data, dict):
-        return {"chat_ids": {}, "filter_rules": {}}
-    data.setdefault("chat_ids", {})
-    data.setdefault("filter_rules", {})
-    return data
+    return _normalize_telegram_payload(data)
 
 
 def save_telegram_data(data: Dict[str, Any]):
-    cleaned = data if isinstance(data, dict) else {"chat_ids": {}, "filter_rules": {}}
-    cleaned.setdefault("chat_ids", {})
-    cleaned.setdefault("filter_rules", {})
+    cleaned = _normalize_telegram_payload(data)
     storage.write_value(TELEGRAM_BUCKET, TELEGRAM_KEY, cleaned)
 
 
