@@ -1,9 +1,11 @@
 import json
 import os
+from pathlib import Path
+import shutil
 import sqlite3
 import time
 from typing import Any, Dict, Iterable, Tuple
-from modules.paths_module import DEFAULT_DB_PATH
+from modules.paths_module import DEFAULT_DB_PATH, LEGACY_DB_PATH
 
 DB_PATH = (
     os.environ.get("NITTER_DB_PATH")
@@ -12,6 +14,54 @@ DB_PATH = (
 )
 
 _initialized = False
+_legacy_db_checked = False
+
+
+def _using_explicit_db_path() -> bool:
+    return bool(os.environ.get("NITTER_DB_PATH") or os.environ.get("MASTODON_POST_DB"))
+
+
+def _maybe_migrate_legacy_default_db():
+    global DB_PATH, _legacy_db_checked
+    if _legacy_db_checked:
+        return
+    _legacy_db_checked = True
+
+    if _using_explicit_db_path():
+        return
+
+    preferred = Path(DEFAULT_DB_PATH)
+    legacy = Path(LEGACY_DB_PATH)
+    if preferred.exists():
+        DB_PATH = str(preferred)
+        return
+    if not legacy.exists():
+        return
+
+    try:
+        preferred.parent.mkdir(parents=True, exist_ok=True)
+        legacy.replace(preferred)
+        DB_PATH = str(preferred)
+        return
+    except OSError:
+        if preferred.exists():
+            DB_PATH = str(preferred)
+            return
+
+    try:
+        preferred.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(legacy, preferred)
+        try:
+            legacy.unlink()
+        except OSError:
+            pass
+        DB_PATH = str(preferred)
+        return
+    except OSError:
+        if preferred.exists():
+            DB_PATH = str(preferred)
+        elif legacy.exists():
+            DB_PATH = str(legacy)
 
 
 def _now() -> int:
@@ -19,6 +69,7 @@ def _now() -> int:
 
 
 def get_connection() -> sqlite3.Connection:
+    _maybe_migrate_legacy_default_db()
     os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
     return sqlite3.connect(DB_PATH)
 

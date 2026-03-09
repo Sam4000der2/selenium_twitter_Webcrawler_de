@@ -6,7 +6,11 @@ import time
 from typing import Any, Dict, Iterable, List
 
 from modules import storage_module as storage
-from modules.paths_module import DATA_FILE as DEFAULT_DATA_FILE
+from modules.paths_module import (
+    DATA_FILE as DEFAULT_DATA_FILE,
+    DEFAULT_ARCHIVE_LOG_RETENTION_DAYS,
+    DEFAULT_LIVE_LOG_RETENTION_DAYS,
+)
 
 TELEGRAM_BUCKET = "telegram_config"
 TELEGRAM_KEY = "chat_config"
@@ -32,8 +36,8 @@ LOG_ARCHIVE_BUCKET = "logs_archive"
 FAILED_DELIVERIES_CHANNELS = {"telegram", "mastodon"}
 MASTODON_PAUSE_CONSUMERS = {"mastodon_bot", "mastodon_control_bot"}
 
-LIVE_LOG_RETENTION_DAYS = 7
-ARCHIVE_LOG_RETENTION_DAYS = 90
+LIVE_LOG_RETENTION_DAYS = DEFAULT_LIVE_LOG_RETENTION_DAYS
+ARCHIVE_LOG_RETENTION_DAYS = DEFAULT_ARCHIVE_LOG_RETENTION_DAYS
 _TELEGRAM_FILE_MIGRATION_CHECKED = False
 
 

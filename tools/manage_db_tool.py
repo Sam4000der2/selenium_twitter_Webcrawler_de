@@ -4,7 +4,7 @@ Einfaches Verwaltungsskript für die gemeinsame Datenbank (nitter_bot.db).
 Ohne Fachchinesisch: Du kannst Tabelleninhalte ansehen, Werte setzen oder löschen.
 
 Start: python3 -m tools.manage_db_tool [--db-path /pfad/zur/db]
-Ohne Angabe nutzt das Skript den Standard aus NITTER_DB_PATH/BOTS_BASE_DIR.
+Ohne Angabe nutzt das Skript den Standard aus NITTER_DB_PATH bzw. config/default_settings.json.
 """
 
 from __future__ import annotations
@@ -306,7 +306,7 @@ def quick_delete_urls():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Einfache Verwaltung für nitter_bot.db")
+    parser = argparse.ArgumentParser(description="Einfache Verwaltung fuer nitter_bot.db")
     parser.add_argument("--db-path", help="Pfad zur Datenbank (setzt NITTER_DB_PATH)")
     args = parser.parse_args()
 

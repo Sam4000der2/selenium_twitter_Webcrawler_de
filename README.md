@@ -6,7 +6,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 - Keine Snap-Pakete nutzen (Selenium + Snap machen Probleme); Firefox via Flatpak ist nicht getestet, Chrome ist möglich aber instabiler.
 - Twitter/X-Listen brauchen in der Regel einen eingeloggten Account. Nutze ein Firefox-Profil (`about:profiles`) und setze optional `TWITTER_FIREFOX_PROFILE_PATH`. Falls die Zielseite öffentlich ist, kannst du ohne Login arbeiten.
 - Geckodriver muss verfügbar sein (Default `/usr/local/bin/geckodriver`). Bei abweichendem Pfad setze `TWITTER_GECKODRIVER_PATH`.
-- Bestehende JSON-State-Dateien können mit `python -m tools.migrate_telegram_data_json_tool` nach `nitter_bot.db` migriert werden.
+- Bestehende JSON-State-Dateien können mit `python -m tools.migrate_telegram_data_json_tool` nach `config/nitter_bot.db` migriert werden.
 
 ## Projektstruktur
 - `bots/`: ausführbare Bot-Implementierungen (einheitlich mit `*_bot.py` bzw. `*_control_bot.py`)
@@ -16,15 +16,15 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 - `config/`: statische Vorlagen (z. B. `config/data.json.example`)
 
 ## Komponenten
-- `bots/twitter_bot.py`: Selenium-Scraper für eine X-Liste. Nutzt ein lokales Firefox-Profil, dedupliziert über die gemeinsame SQLite-DB `nitter_bot.db` und sendet neue Tweets an Telegram und Mastodon.
-- `bots/nitter_bot.py`: Pollt die lokale Nitter-Instanz (`http://localhost:8081/<user>/rss`) statt Selenium/X. History und Nutzer-Intervalle liegen in `nitter_bot.db` und sollen den Twitter-Bot langfristig ersetzen.
+- `bots/twitter_bot.py`: Selenium-Scraper für eine X-Liste. Nutzt ein lokales Firefox-Profil, dedupliziert über die gemeinsame SQLite-DB `config/nitter_bot.db` und sendet neue Tweets an Telegram und Mastodon.
+- `bots/nitter_bot.py`: Pollt die lokale Nitter-Instanz (`http://localhost:8081/<user>/rss`) statt Selenium/X. History und Nutzer-Intervalle liegen in `config/nitter_bot.db` und sollen den Twitter-Bot langfristig ersetzen.
 - `bots/bsky_bot.py`: Pollt konfigurierte Bluesky-RSS-Feeds (z. B. VIZ Berlin) und leitet neue Einträge an Telegram/Mastodon weiter.
 - `modules/telegram_bot_module.py`: Versendet Tweets/Feeds an alle in der DB hinterlegten Chats. Filterwörter pro Chat bestimmen, was zugestellt wird.
 - `bots/telegram_control_bot.py`: Telegram-Bot zur Verwaltung von Chat-IDs und Filtern (`/start`, `/status`, `/addfilterrules`, `/deletefilterrules`, `/deleteallrules`, `/list`, `/about`, `/datenschutz`). Admin-Kommandos erlauben Service-Meldungen an alle Kanäle und Log-Auszüge.
 - `modules/mastodon_bot_module.py`: Postet Tweets/Feeds auf `berlin.social`, `toot.berlin` und `mastodon.berlin` (Tokens aus ENV). Unterstützt Bilder/Videos, generiert Alt-Texte via Gemini und taggt Nutzer basierend auf DB-Regeln.
 - `bots/mastodon_control_bot.py`: Mastodon-DM-Bot zum Verwalten der Tagging-Regeln (`/start`, `/add`, `/list`, `/overview`, `/delete`, `/pause`, `/resume`, `/schedule`, `/stop`). Lauscht optional auf Events vom Posting-Bot.
 - `modules/gemini_helper_module.py` + `tools/test_alt_text_tool.py`: Modellverwaltung für Gemini (Cache in der DB) und Offline/Online-Test der Alt-Text-Generierung (`python -m tools.test_alt_text_tool --image <pfad> [--dummy]`).
-- Daten/Logs: zentrale SQLite-DB `nitter_bot.db` (Chat-Filter, Mastodon-Regeln, Gemini-Cache, Histories inkl. Mastodon-Posts) und Log unter `$BOTS_BASE_DIR/twitter_bot.log` (Default: aktueller Repo-Ordner).
+- Daten/Logs: zentrale SQLite-DB `config/nitter_bot.db` (Chat-Filter, Mastodon-Regeln, Gemini-Cache, Histories inkl. Mastodon-Posts) und Log unter `$BOTS_BASE_DIR/twitter_bot.log` (Default: aktueller Repo-Ordner).
 - Legacy-Telegram-State: `data.json` ist eine lokale Laufzeitdatei (nicht versioniert). Im Repo liegt nur `config/data.json.example` als Vorlage.
 
 ## Voraussetzungen & Installation
@@ -42,15 +42,16 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   - Twitter/Selenium: `TWITTER_LIST_URL`, `TWITTER_GECKODRIVER_PATH`, optional `TWITTER_FIREFOX_PROFILE_PATH`
   - Optional: `MASTODON_CONTROL_EVENT_ENABLED|HOST|PORT`, `MASTODON_CONTROL_POLL_INTERVAL`
   - Logging zentral: `BOTS_LOG_LEVEL` (Fallback `LOG_LEVEL`, z. B. `DEBUG`, `INFO`, `WARNING`, `ERROR`)
+- Zentrale Default-Werte stehen in `config/default_settings.json` (z. B. `log_level`, `db_path`, Poll-/Retention-Werte). ENV-Variablen überschreiben diese Defaults.
 
 > Hinweis: Laufzeitpfade werden zentral über `BOTS_BASE_DIR` gesteuert (Default: Repo-Ordner).  
-  Die SQLite-DB kann über `NITTER_DB_PATH` umgezogen werden (Standard `$BOTS_BASE_DIR/nitter_bot.db`).
+  Die SQLite-DB kann über `NITTER_DB_PATH` umgezogen werden (Standard `$BOTS_BASE_DIR/config/nitter_bot.db`).
 
 ## Konfiguration
 - **Twitter/X-Scraper (`bots/twitter_bot.py`)**
   - Quell-Liste per `TWITTER_LIST_URL` konfigurieren (Fallback: interner Default).
   - Firefox-Profil optional über `TWITTER_FIREFOX_PROFILE_PATH`, Geckodriver über `TWITTER_GECKODRIVER_PATH` (Default `/usr/local/bin/geckodriver`).
-  - Neue Links werden in `nitter_bot.db` dedupliziert; `var_href` wird beim Telegram-Versand auf `nitter.net` umgeschrieben.
+  - Neue Links werden in `config/nitter_bot.db` dedupliziert; `var_href` wird beim Telegram-Versand auf `nitter.net` umgeschrieben.
   - Kurz-URLs werden erweitert; Bilder/Videos und externe Links gehen an Mastodon weiter.
   - Optional ohne Login: `TWITTER_FIREFOX_PROFILE_PATH` nicht setzen.
 
@@ -150,7 +151,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 ## Logging, Daten & Betrieb
 - Zentrales Log: `$BOTS_BASE_DIR/twitter_bot.log` (alle Module). Admin-Befehle in Telegram zeigen Auszüge.
 - Zentrales Logging-Level für alle Bots: `BOTS_LOG_LEVEL` (oder `LOG_LEVEL`).
-- Historien/Caches landen gesammelt in `nitter_bot.db` (Buckets u. a. für Twitter/Nitter-History, Bluesky-Feeds, Telegram-Filter, Mastodon-Regeln/-Posts, Gemini-Status).
+- Historien/Caches landen gesammelt in `config/nitter_bot.db` (Buckets u. a. für Twitter/Nitter-History, Bluesky-Feeds, Telegram-Filter, Mastodon-Regeln/-Posts, Gemini-Status).
 - Für Dauerbetrieb können systemd-Services genutzt werden (ExecStart läuft über `$BOTS_BASE_DIR`; `BOTS_BASE_DIR` wird im `EnvironmentFile` gesetzt).
 
 ## Danksagung

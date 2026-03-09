@@ -28,7 +28,13 @@ import requests
 
 from modules import state_store_module as state_store
 from modules.url_safety_module import validate_outbound_url
-from modules.paths_module import LOG_FILE, LOG_LEVEL
+from modules.paths_module import (
+    DEFAULT_NITTER_HISTORY_LIMIT,
+    DEFAULT_NITTER_MAX_ITEM_AGE_SECONDS,
+    DEFAULT_NITTER_POLL_INTERVAL,
+    LOG_FILE,
+    LOG_LEVEL,
+)
 _ENV_PARSE_WARNINGS: list[str] = []
 _telegram_bot_module = None
 _mastodon_bot_module = None
@@ -62,9 +68,13 @@ def _parse_int_env(name: str, default: int, *, min_value: int | None = None) -> 
     return value
 
 
-POLL_INTERVAL = _parse_int_env("NITTER_POLL_INTERVAL", 60, min_value=1)
-HISTORY_LIMIT = _parse_int_env("NITTER_HISTORY_LIMIT", 200, min_value=1)
-MAX_ITEM_AGE_SECONDS = _parse_int_env("NITTER_MAX_ITEM_AGE_SECONDS", 2 * 60 * 60, min_value=0)
+POLL_INTERVAL = _parse_int_env("NITTER_POLL_INTERVAL", DEFAULT_NITTER_POLL_INTERVAL, min_value=1)
+HISTORY_LIMIT = _parse_int_env("NITTER_HISTORY_LIMIT", DEFAULT_NITTER_HISTORY_LIMIT, min_value=1)
+MAX_ITEM_AGE_SECONDS = _parse_int_env(
+    "NITTER_MAX_ITEM_AGE_SECONDS",
+    DEFAULT_NITTER_MAX_ITEM_AGE_SECONDS,
+    min_value=0,
+)
 
 DEFAULT_INTERVAL = 15 * 60  # Sekunden
 USER_OVERRIDES = {

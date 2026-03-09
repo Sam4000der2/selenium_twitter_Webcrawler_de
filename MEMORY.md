@@ -11,6 +11,9 @@
 - Dedicated CLI migration script: `tools/migrate_telegram_data_json_tool.py` (`--dry-run`, `--force`, optional `--db-path`).
 - Utility layout: Python tools in `tools/` (`*_tool.py`), shell helpers in `scripts/`, static templates in `config/`.
 - Central log level config: `BOTS_LOG_LEVEL` (fallback `LOG_LEVEL`) via `modules.paths_module.LOG_LEVEL`.
+- New default settings file: `config/default_settings.json` (central defaults for `log_level`, DB/log/data paths, poll and retention values).
+- Default SQLite location moved to `config/nitter_bot.db`; legacy root DB path is auto-migrated/fallback-safe in `modules/storage_module.py`.
+- `bots/nitter_bot.py` and `bots/bsky_bot.py` now read core defaults from `modules.paths_module` constants.
 - Canonical runtime layout: `bots/` for executable bots, `modules/` for reusable modules.
 - Naming convention: bots use `*_bot.py` / `*_control_bot.py`; modules use `_module.py`.
 - `modules/mastodon_bot_module.py` and `modules/telegram_bot_module.py` are modules (not bot entry files).

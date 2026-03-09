@@ -195,7 +195,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--db-path",
         default=None,
-        help="Path to nitter_bot.db (overrides NITTER_DB_PATH for this run).",
+        help="Path to nitter_bot.db (overrides NITTER_DB_PATH/default settings for this run).",
     )
     parser.add_argument(
         "--dry-run",

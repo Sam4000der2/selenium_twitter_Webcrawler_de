@@ -26,7 +26,13 @@ import pytz
 from modules import telegram_bot_module as telegram_bot
 from modules import mastodon_bot_module as mastodon_bot
 from modules import state_store_module as state_store
-from modules.paths_module import LOG_FILE, LOG_LEVEL
+from modules.paths_module import (
+    DEFAULT_BSKY_MAX_ENTRY_AGE_SECONDS,
+    DEFAULT_BSKY_MAX_KEEP_CAP,
+    DEFAULT_BSKY_MIN_KEEP,
+    LOG_FILE,
+    LOG_LEVEL,
+)
 
 # -------------------------
 # Logging configuration
@@ -53,9 +59,9 @@ FEEDS = [
 ]
 
 # Grundeinstellungen zur History-Größe (kann in FEEDS per "max_entries" pro Feed überschrieben werden)
-MIN_KEEP = 20        # mindestens so viele IDs behalten (falls Feed sehr klein ist)
-MAX_KEEP_CAP = 1000  # absolute Obergrenze
-MAX_ENTRY_AGE_SECONDS = 3 * 60 * 60  # nur Einträge der letzten 3 Stunden berücksichtigen
+MIN_KEEP = DEFAULT_BSKY_MIN_KEEP
+MAX_KEEP_CAP = DEFAULT_BSKY_MAX_KEEP_CAP
+MAX_ENTRY_AGE_SECONDS = DEFAULT_BSKY_MAX_ENTRY_AGE_SECONDS
 
 PLACEHOLDER_MARKERS = [
     "[contains quote post or other embedded content]"

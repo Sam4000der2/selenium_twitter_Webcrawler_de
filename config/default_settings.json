@@ -1,0 +1,15 @@
+{
+  "log_level": "INFO",
+  "log_file": "twitter_bot.log",
+  "log_dir": "logs",
+  "data_file": "data.json",
+  "db_path": "config/nitter_bot.db",
+  "live_log_retention_days": 7,
+  "archive_log_retention_days": 90,
+  "nitter_poll_interval_seconds": 60,
+  "nitter_history_limit": 200,
+  "nitter_max_item_age_seconds": 7200,
+  "bsky_min_keep": 20,
+  "bsky_max_keep_cap": 1000,
+  "bsky_max_entry_age_seconds": 10800
+}

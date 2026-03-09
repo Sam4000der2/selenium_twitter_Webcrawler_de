@@ -4,46 +4,71 @@ Datum: 2026-03-09
 Repository: `/home/sascha/Dokumente/bots`
 
 ## Scope
-Verifikation gegen diese Akzeptanzkriterien:
-1. Verbleibende Dateien sinnvoll in Unterordner sortiert (`tools/scripts/config`)
-2. `bots`/`modules` Trennung klar
-3. Referenzen angepasst
-4. Relevante Checks grün
+Verifikation nach Fix in `modules/storage_module.py` gegen unveränderte Akzeptanzkriterien:
+1. `config/nitter_bot.db` als Default
+2. zentrale `default_settings`-Datei wired
+3. zentrale Defaults werden genutzt
+4. relevante Checks sind grün
 
-## Ergebnisse
+## Ergebnis
 
-### 1) Dateien sinnvoll in Unterordner sortiert
+### 1) `config/nitter_bot.db` als Default
 Bestanden.
-- CLI-/Wartungsdateien liegen unter `tools/`:
-  - `tools/manage_db_tool.py`
-  - `tools/migrate_telegram_data_json_tool.py`
-  - `tools/store_twitter_logs_tool.py`
-  - `tools/test_alt_text_tool.py`
-- Shell-Hilfsskript liegt unter `scripts/`:
-  - `scripts/rotate_twitter_log.sh`
-- Statische Vorlage liegt unter `config/`:
-  - `config/data.json.example`
-- Keine Python-Dateien mehr im Repo-Root (`root_py []`).
+- Default-DB-Pfad wird zentral auf `config/nitter_bot.db` gesetzt:
+  - `modules/paths_module.py:111`
+  - `modules/paths_module.py:115`
+  - `config/default_settings.json:6`
+- Storage nutzt diesen zentralen Default ohne explizite ENV-Overrides:
+  - `modules/storage_module.py:10`
+  - `modules/storage_module.py:13`
+  - `modules/storage_module.py:33`
 
-### 2) Trennung `bots` vs `modules` klar
+### 2) Zentrale `default_settings`-Datei ist wired
 Bestanden.
-- Entrypoints liegen in `bots/` und folgen `*_bot.py` / `*_control_bot.py`.
-- Reusable Komponenten liegen in `modules/` und folgen `_module.py`.
-- Namensprüfung ergab:
-  - `bots_non_bot_suffix []`
-  - `modules_non_module_suffix []`
+- Zentrale Datei vorhanden: `config/default_settings.json`.
+- Verdrahtung über zentralen Resolver (inkl. optionaler ENV-Override `BOTS_DEFAULT_SETTINGS_FILE`):
+  - `modules/paths_module.py:10`
+  - `modules/paths_module.py:11`
+  - `modules/paths_module.py:51`
+  - `modules/paths_module.py:56`
+  - `modules/paths_module.py:87`
+  - `modules/paths_module.py:88`
+- Log-Level fällt auf Settings zurück, wenn keine ENV-Werte gesetzt sind:
+  - `modules/paths_module.py:174`
+  - `modules/paths_module.py:177`
 
-### 3) Referenzen angepasst
+### 3) Zentrale Defaults werden in relevanten Modulen/Bots genutzt
 Bestanden.
-- Suche nach alten Root-Dateinamen (`manage_db.py`, `migrate_telegram_data_json.py`, `store_twitter_logs.py`, `test_alt_text.py`, `rotate_twitter_log.sh`) außerhalb `reviews/` ergab keine veralteten Referenzen.
-- Relevante Dokumentation zeigt neue Pfade, u. a.:
-  - `README.md` mit `config/data.json.example` und `python -m tools.test_alt_text_tool`
-  - `MEMORY.md` mit `tools/migrate_telegram_data_json_tool.py`
+- DB/Storage + Legacy-Migrationspfad-Handling nach Fix:
+  - `modules/storage_module.py:24`
+  - `modules/storage_module.py:35`
+  - `modules/storage_module.py:36`
+  - `modules/storage_module.py:38`
+  - `modules/storage_module.py:64`
+- Log-Retention wird aus zentralen Defaults übernommen:
+  - `modules/state_store_module.py:11`
+  - `modules/state_store_module.py:12`
+  - `modules/state_store_module.py:39`
+  - `modules/state_store_module.py:40`
+- `nitter_bot` nutzt zentrale Poll/History/Age-Defaults + zentrales Logging:
+  - `bots/nitter_bot.py:31`
+  - `bots/nitter_bot.py:71`
+  - `bots/nitter_bot.py:72`
+  - `bots/nitter_bot.py:73`
+  - `bots/nitter_bot.py:35`
+  - `bots/nitter_bot.py:36`
+- `bsky_bot` nutzt zentrale Feed-Defaults + zentrales Logging:
+  - `bots/bsky_bot.py:29`
+  - `bots/bsky_bot.py:62`
+  - `bots/bsky_bot.py:63`
+  - `bots/bsky_bot.py:64`
+  - `bots/bsky_bot.py:33`
+  - `bots/bsky_bot.py:34`
 
 ### 4) Relevante Checks grün
 Bestanden.
 - `./venv/bin/ruff check .` → `All checks passed!`
 - `./venv/bin/python -m compileall -q -x '(^|/)venv($|/)' .` → erfolgreich
-- `./venv/bin/python -m pytest tests tests-unit` → `26 passed`
+- `./venv/bin/python -m pytest tests tests-unit` → `27 passed`
 
 0 Findings
