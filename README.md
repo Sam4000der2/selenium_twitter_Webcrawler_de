@@ -13,7 +13,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 - `modules/`: wiederverwendbare Bot-Module (einheitlich mit `_module.py`)
 - `tools/`: CLI-/Wartungs-Skripte (einheitlich mit `_tool.py`)
 - `scripts/`: Shell-Hilfsskripte für Betrieb/Automation
-- `config/`: statische Vorlagen (z. B. `config/data.json.example`)
+- `config/`: zentrale Runtime-/Default-Konfiguration (z. B. `config/default_settings.json`, `config/nitter_bot.db`)
 
 ## Komponenten
 - `bots/twitter_bot.py`: Selenium-Scraper für eine X-Liste. Nutzt ein lokales Firefox-Profil, dedupliziert über die gemeinsame SQLite-DB `config/nitter_bot.db` und sendet neue Tweets an Telegram und Mastodon.
@@ -25,7 +25,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 - `bots/mastodon_control_bot.py`: Mastodon-DM-Bot zum Verwalten der Tagging-Regeln (`/start`, `/add`, `/list`, `/overview`, `/delete`, `/pause`, `/resume`, `/schedule`, `/stop`). Lauscht optional auf Events vom Posting-Bot.
 - `modules/gemini_helper_module.py` + `tools/test_alt_text_tool.py`: Modellverwaltung für Gemini (Cache in der DB) und Offline/Online-Test der Alt-Text-Generierung (`python -m tools.test_alt_text_tool --image <pfad> [--dummy]`).
 - Daten/Logs: zentrale SQLite-DB `config/nitter_bot.db` (Chat-Filter, Mastodon-Regeln, Gemini-Cache, Histories inkl. Mastodon-Posts) und Log unter `$BOTS_BASE_DIR/twitter_bot.log` (Default: aktueller Repo-Ordner).
-- Legacy-Telegram-State: `data.json` ist eine lokale Laufzeitdatei (nicht versioniert). Im Repo liegt nur `config/data.json.example` als Vorlage.
+- Legacy-Telegram-State: `data.json` ist eine lokale Laufzeitdatei (nicht versioniert) und kann bei Bedarf mit dem Migrationstool in die DB übernommen werden.
 
 ## Voraussetzungen & Installation
 - Python 3 + virtuelles Environment (empfohlen):  

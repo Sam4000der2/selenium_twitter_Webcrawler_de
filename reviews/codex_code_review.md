@@ -1,19 +1,20 @@
 # Codex Review - Code (uncommitted changes)
 
-Scope geprüft:
-- Aktueller uncommitted Stand in `/home/sascha/Dokumente/bots`
-- Schwerpunkt auf Fix in `modules/storage_module.py` (Race-Condition bei Legacy-DB-Migration)
-- Zusätzlich geprüft: `modules/paths_module.py`, `modules/state_store_module.py`, `bots/nitter_bot.py`, `bots/bsky_bot.py`, `config/default_settings.json`, Doku/Test-Updates
+Geprüfter Scope:
+- Entfernung von `config/data.json.example`
+- README-Update zur `config`-Beschreibung und zum Legacy-Telegram-Hinweis
+- `MEMORY.md`-Update
+- aktueller uncommitted Stand in `/home/sascha/Dokumente/bots`
 
-Prüfkriterien:
-- Korrektheit, Edge Cases, Security, Wartbarkeit, Tests, Style, Breaking Changes
+Prüfung:
+- Diff-Review (`git diff`, `git diff --cached`)
+- Referenzscan (`rg -n "data\.json\.example" --glob '!reviews/**'`)
+- Tests: `./venv/bin/python3 -m pytest tests tests-unit` (27 passed)
+- Lint: `./venv/bin/python3 -m ruff check .` (passed)
 
-Durchgeführte Validierung:
-- Diff-Review der betroffenen Dateien
-- `./venv/bin/python3 -m pytest tests tests-unit` (27 passed)
-- `./venv/bin/python3 -m ruff check .` (passed)
-- `./venv/bin/python3 -m json.tool config/default_settings.json` (passed)
-- Zusätzlicher Parallelstart-Smoke-Test mit 2 Prozessen für Legacy-DB-Migration (`nitter_bot.db` -> `config/nitter_bot.db`): beide Prozesse nutzten konsistent den Preferred-Pfad
+Bewertung:
+- Entfernung der Datei ist konsistent umgesetzt (staged delete), keine veralteten README-Verweise mehr.
+- README und MEMORY sind inhaltlich konsistent zum neuen Zustand (kein committed Template, `data.json` als optionale lokale Runtime-Datei).
+- Keine Regression oder Breaking-Änderung im geprüften Scope erkennbar.
 
-Ergebnis:
 0 Findings
