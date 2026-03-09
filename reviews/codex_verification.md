@@ -1,17 +1,23 @@
-Issue #56 Verifikation
+Issue #56 Verifikation (unabhaengig)
 
-Scope:
-- Kriterium 1: Non-command mentions werden ignoriert (keine Bot-Antwort)
-- Kriterium 2: Explizite Slash-Befehle funktionieren weiter
-- Kriterium 3: Offene Dialogzustaende (ja/nein) funktionieren weiterhin ohne Slash
+Akzeptanzkriterien:
+1. Non-command mentions werden ignoriert (keine Bot-Antwort)
+2. Explizite Slash-Befehle funktionieren
+3. Offene Dialogzustaende (ja/nein) funktionieren weiterhin ohne Slash
 
 Durchgefuehrte Verifikation:
-- Codepfad geprueft in `mastodon_control_bot.py`:
-  - Pending-Dialog wird vor Slash-Gate verarbeitet (`handle_command`, Zeilen 1980-1986).
-  - Non-Slash Eingaben ausserhalb offener Dialoge werden frueh beendet (`if not lower.startswith(\"/\"): return`).
-- Laufzeitverifikation per isoliertem Python-Harness (mit Stub fuer externes `mastodon`-Modul) gegen `handle_command`:
-  - `@controlbot Danke ...` -> keine Antwort.
-  - `@controlbot /status` -> Slash-Command wird verarbeitet.
-  - Offener `confirm_start`-Dialog mit `ja` bzw. `nein` ohne Slash -> korrekt verarbeitet und Dialogzustand beendet.
+- Codepfad-Pruefung in `mastodon_control_bot.py`:
+  - Offene Dialoge werden zuerst verarbeitet (`handle_pending_state` vor Slash-Gate in `handle_command`).
+  - Ausserhalb offener Dialoge werden nur explizite Slash-Befehle verarbeitet (`if not lower.startswith("/") : return` Logik vorhanden).
+- Testlauf:
+  - `BOTS_BASE_DIR=/tmp/bots-issue56-verification PYTHONDONTWRITEBYTECODE=1 ./venv/bin/python -m pytest -q -p no:cacheprovider tests-unit/test_mastodon_control_bot_commands.py`
+  - Ergebnis: `5 passed`
+- Isolierte Laufzeitverifikation (direkter Aufruf von `handle_command` mit Stubs):
+  - `@controlbot Danke ...` -> keine Bot-Antwort
+  - `@controlbot /status` -> Bot-Antwort mit Status
+  - `@controlbot /help)` -> Bot-Antwort mit Help (Slash-Command mit nachgestellter Klammer funktioniert)
+  - Offener `confirm_start`-Dialog + `ja` (ohne Slash) -> verarbeitet, Zustand entfernt
+  - Offener `confirm_start`-Dialog + `nein` (ohne Slash) -> verarbeitet, Zustand entfernt
 
+Ergebnis:
 0 Findings
