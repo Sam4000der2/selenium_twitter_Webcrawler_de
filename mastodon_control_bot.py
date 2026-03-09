@@ -1975,31 +1975,45 @@ async def handle_command(mastodon, instance_name, status, account):
         return
 
     text = clean_command_text(status.get("content") or "")
-    cmd, remainder = parse_user_command(text)
     lower = text.lower()
 
     # Falls noch ein Dialog offen ist, zuerst dort antworten
     if await handle_pending_state(mastodon, instance_name, acct, status_id, text):
         return
 
-    if cmd == "status" or lower.startswith("/status"):
+    # Nur explizite Slash-Befehle außerhalb offener Dialoge verarbeiten.
+    if not lower.startswith("/"):
+        return
+
+    cmd, remainder = parse_user_command(text)
+    if cmd is None:
+        send_dm(
+            mastodon,
+            acct,
+            status_id,
+            "Das habe ich nicht verstanden.\n\nNutze /help für eine sehr einfache Anleitung.\n"
+            "Kurz: /start (einschalten), /add (Assistent), /list (Regeln anzeigen)."
+        )
+        return
+
+    if cmd == "status":
         reply_text = build_status_text()
         send_dm(mastodon, acct, status_id, reply_text)
         return
 
-    if cmd == "help" or lower.startswith("/help") or lower.startswith("/hilfe"):
+    if cmd == "help":
         send_dm(mastodon, acct, status_id, help_text())
         return
 
-    if cmd == "about" or lower.startswith("/about"):
+    if cmd == "about":
         send_dm(mastodon, acct, status_id, about_text())
         return
 
-    if cmd == "datenschutz" or lower.startswith("/datenschutz") or lower.startswith("/privacy") or lower.startswith("/data"):
+    if cmd == "datenschutz":
         send_dm(mastodon, acct, status_id, privacy_text())
         return
 
-    if cmd == "start" or lower.startswith("/start"):
+    if cmd == "start":
         state, _ = tagging_mode_status(acct)
         if state == "aktiv":
             send_dm(
@@ -2026,8 +2040,8 @@ async def handle_command(mastodon, instance_name, status, account):
         send_dm(mastodon, acct, status_id, prompt)
         return
 
-    if cmd == "add" or lower.startswith("/add"):
-        base = remainder if cmd == "add" else " ".join(text.split()[1:])
+    if cmd == "add":
+        base = remainder
         parts = base.split() if base else []
         if parts:
             kws, blocked, sched, validity, err, targets = parse_quick_add_args(parts)
@@ -2088,23 +2102,23 @@ async def handle_command(mastodon, instance_name, status, account):
         )
         return
 
-    if cmd == "list" or lower.startswith("/list"):
+    if cmd == "list":
         summary = format_rules_summary(acct)
         send_dm(mastodon, acct, status_id, summary)
         return
 
-    if cmd == "overview" or lower.startswith("/overview"):
+    if cmd == "overview":
         summary = format_rules_overview(acct)
         send_dm(mastodon, acct, status_id, summary, include_tagging_hint=False)
         return
 
-    if cmd == "delete" or lower.startswith("/delete") or lower.startswith("/del"):
+    if cmd == "delete":
         cfg, _ = get_user_config_view(acct)
         if not cfg or not cfg.get("rules"):
             send_dm(mastodon, acct, status_id, "Keine Regeln gefunden. Lege mit /add eine Regel an.")
             return
 
-        id_text = remainder if cmd == "delete" else " ".join(text.split()[1:])
+        id_text = remainder
         ids = parse_rule_ids_from_text(id_text)
         all_ids = {r.get("id") for r in cfg.get("rules", [])}
 
@@ -2131,9 +2145,9 @@ async def handle_command(mastodon, instance_name, status, account):
         )
         return
 
-    if cmd == "pause" or lower.startswith("/pause") or lower.startswith("/disable"):
+    if cmd == "pause":
         cfg, _ = get_user_config_view(acct)
-        id_text = remainder if cmd == "pause" else " ".join(text.split()[1:])
+        id_text = remainder
         ids = parse_rule_ids_from_text(id_text)
         existing_ids = {r.get("id") for r in (cfg.get("rules") if cfg else [])}
 
@@ -2156,9 +2170,9 @@ async def handle_command(mastodon, instance_name, status, account):
             send_dm(mastodon, acct, status_id, "Alle Regeln pausieren? (ja/nein)")
         return
 
-    if cmd == "resume" or lower.startswith("/resume") or lower.startswith("/enable"):
+    if cmd == "resume":
         cfg, _ = get_user_config_view(acct)
-        id_text = remainder if cmd == "resume" else " ".join(text.split()[1:])
+        id_text = remainder
         ids = parse_rule_ids_from_text(id_text)
         existing_ids = {r.get("id") for r in (cfg.get("rules") if cfg else [])}
 
@@ -2181,7 +2195,7 @@ async def handle_command(mastodon, instance_name, status, account):
             send_dm(mastodon, acct, status_id, "Alle Regeln aktivieren? (ja/nein)")
         return
 
-    if cmd == "schedule" or lower.startswith("/schedule"):
+    if cmd == "schedule":
         _set_state(instance_name, acct, {"mode": "schedule_wizard", "step": "time", "data": {}})
         send_dm(
             mastodon,
@@ -2193,7 +2207,7 @@ async def handle_command(mastodon, instance_name, status, account):
         )
         return
 
-    if cmd == "stop" or lower.startswith("/stop"):
+    if cmd == "stop":
         USER_STATES[_state_key(instance_name, acct)] = {
             "mode": "confirm_action",
             "action": "stop_all"
@@ -2201,7 +2215,7 @@ async def handle_command(mastodon, instance_name, status, account):
         send_dm(mastodon, acct, status_id, "Tagging komplett deaktivieren und alle Regeln löschen? (ja/nein)")
         return
 
-    if cmd == "startover" or lower.startswith("/startover"):
+    if cmd == "startover":
         _clear_state(instance_name, acct)
         send_dm(mastodon, acct, status_id, "Dialog zurückgesetzt. Nutze /add oder /help.")
         return
