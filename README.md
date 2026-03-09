@@ -6,11 +6,14 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 - Keine Snap-Pakete nutzen (Selenium + Snap machen Probleme); Firefox via Flatpak ist nicht getestet, Chrome ist möglich aber instabiler.
 - Twitter/X-Listen brauchen in der Regel einen eingeloggten Account. Nutze ein Firefox-Profil (`about:profiles`) und setze optional `TWITTER_FIREFOX_PROFILE_PATH`. Falls die Zielseite öffentlich ist, kannst du ohne Login arbeiten.
 - Geckodriver muss verfügbar sein (Default `/usr/local/bin/geckodriver`). Bei abweichendem Pfad setze `TWITTER_GECKODRIVER_PATH`.
-- Bestehende JSON-State-Dateien können mit `migrate_telegram_data_json.py` nach `nitter_bot.db` migriert werden.
+- Bestehende JSON-State-Dateien können mit `python -m tools.migrate_telegram_data_json_tool` nach `nitter_bot.db` migriert werden.
 
 ## Projektstruktur
 - `bots/`: ausführbare Bot-Implementierungen (einheitlich mit `*_bot.py` bzw. `*_control_bot.py`)
 - `modules/`: wiederverwendbare Bot-Module (einheitlich mit `_module.py`)
+- `tools/`: CLI-/Wartungs-Skripte (einheitlich mit `_tool.py`)
+- `scripts/`: Shell-Hilfsskripte für Betrieb/Automation
+- `config/`: statische Vorlagen (z. B. `config/data.json.example`)
 
 ## Komponenten
 - `bots/twitter_bot.py`: Selenium-Scraper für eine X-Liste. Nutzt ein lokales Firefox-Profil, dedupliziert über die gemeinsame SQLite-DB `nitter_bot.db` und sendet neue Tweets an Telegram und Mastodon.
@@ -20,9 +23,9 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 - `bots/telegram_control_bot.py`: Telegram-Bot zur Verwaltung von Chat-IDs und Filtern (`/start`, `/status`, `/addfilterrules`, `/deletefilterrules`, `/deleteallrules`, `/list`, `/about`, `/datenschutz`). Admin-Kommandos erlauben Service-Meldungen an alle Kanäle und Log-Auszüge.
 - `modules/mastodon_bot_module.py`: Postet Tweets/Feeds auf `berlin.social`, `toot.berlin` und `mastodon.berlin` (Tokens aus ENV). Unterstützt Bilder/Videos, generiert Alt-Texte via Gemini und taggt Nutzer basierend auf DB-Regeln.
 - `bots/mastodon_control_bot.py`: Mastodon-DM-Bot zum Verwalten der Tagging-Regeln (`/start`, `/add`, `/list`, `/overview`, `/delete`, `/pause`, `/resume`, `/schedule`, `/stop`). Lauscht optional auf Events vom Posting-Bot.
-- `modules/gemini_helper_module.py` + `test_alt_text.py`: Modellverwaltung für Gemini (Cache in der DB) und Offline/Online-Test der Alt-Text-Generierung (`python test_alt_text.py --image <pfad> [--dummy]`).
+- `modules/gemini_helper_module.py` + `tools/test_alt_text_tool.py`: Modellverwaltung für Gemini (Cache in der DB) und Offline/Online-Test der Alt-Text-Generierung (`python -m tools.test_alt_text_tool --image <pfad> [--dummy]`).
 - Daten/Logs: zentrale SQLite-DB `nitter_bot.db` (Chat-Filter, Mastodon-Regeln, Gemini-Cache, Histories inkl. Mastodon-Posts) und Log unter `$BOTS_BASE_DIR/twitter_bot.log` (Default: aktueller Repo-Ordner).
-- Legacy-Telegram-State: `data.json` ist eine lokale Laufzeitdatei (nicht versioniert). Im Repo liegt nur `data.json.example` als Vorlage.
+- Legacy-Telegram-State: `data.json` ist eine lokale Laufzeitdatei (nicht versioniert). Im Repo liegt nur `config/data.json.example` als Vorlage.
 
 ## Voraussetzungen & Installation
 - Python 3 + virtuelles Environment (empfohlen):  
@@ -66,7 +69,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   - `modules/telegram_bot_module.py` verschickt Nachrichten an alle Chat-IDs; Filterwörter pro Chat entscheiden über Zustellung.
   - `bots/telegram_control_bot.py` bietet Nutzer-Kommandos (Start/Stop/Status/Filter) und Admin-Kommandos (Service-Meldungen, Log-Fehler/Warnungen).
   - Einmalige Migration einer bestehenden `data.json`:  
-    `python migrate_telegram_data_json.py --data-file ./data.json`  
+    `python -m tools.migrate_telegram_data_json_tool --data-file ./data.json`  
     Optional: `--dry-run` (nur prüfen) oder `--force` (bestehende Telegram-Daten in DB überschreiben).
 
 - **Mastodon**
@@ -87,7 +90,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
    - Mastodon-Control: `python bots/mastodon_control_bot.py`
 
 3) Alt-Texte testen (ohne Posten):  
-   `python test_alt_text.py --dummy` (offline) oder `python test_alt_text.py --image <pfad>` mit gesetztem `GEMINI_API_KEY` (optional plus `GEMINI_API_KEY1..4`).
+   `python -m tools.test_alt_text_tool --dummy` (offline) oder `python -m tools.test_alt_text_tool --image <pfad>` mit gesetztem `GEMINI_API_KEY` (optional plus `GEMINI_API_KEY1..4`).
 
 4) Projekt-Checks lokal ausführen:
    - `./venv/bin/python -m compileall -q -x '(^|/)venv($|/)' .`

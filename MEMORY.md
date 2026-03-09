@@ -8,7 +8,8 @@
 - `state_store.migrate_telegram_json_to_db(...)` imports legacy `data.json` into DB when needed.
 - `modules/telegram_bot_module.py` and `bots/telegram_control_bot.py` read/write Telegram state via `state_store`.
 - Telegram migration tests: `tests-unit/test_storage_telegram_migration.py`.
-- Dedicated CLI migration script: `migrate_telegram_data_json.py` (`--dry-run`, `--force`, optional `--db-path`).
+- Dedicated CLI migration script: `tools/migrate_telegram_data_json_tool.py` (`--dry-run`, `--force`, optional `--db-path`).
+- Utility layout: Python tools in `tools/` (`*_tool.py`), shell helpers in `scripts/`, static templates in `config/`.
 - Central log level config: `BOTS_LOG_LEVEL` (fallback `LOG_LEVEL`) via `modules.paths_module.LOG_LEVEL`.
 - Canonical runtime layout: `bots/` for executable bots, `modules/` for reusable modules.
 - Naming convention: bots use `*_bot.py` / `*_control_bot.py`; modules use `_module.py`.

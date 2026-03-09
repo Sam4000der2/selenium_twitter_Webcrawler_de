@@ -87,7 +87,7 @@ Codex unterstützt Multi-Agent-Orchestrierung (Sub-Agents). citeturn0searc
 ## 5) Repository Guidelines
 
 ## Project Structure & Module Organization
-- this Project folder `bots/`: Social bots and monitors (see `bots/AGENTS.md` for bot-specific runbooks). Kopie von /home/sascha/bots. Aktive Entrypoints liegen unter `bots/` (z. B. `bots/nitter_bot.py`, `bots/bsky_bot.py`, `bots/twitter_bot.py`). Wiederverwendbare Komponenten liegen unter `modules/` (inkl. `modules/mastodon_bot_module.py` und `modules/telegram_bot_module.py`). Projekt per Git synchronisiert.
+- this Project folder `bots/`: Social bots and monitors (see `bots/AGENTS.md` for bot-specific runbooks). Kopie von /home/sascha/bots. Aktive Entrypoints liegen unter `bots/` (z. B. `bots/nitter_bot.py`, `bots/bsky_bot.py`, `bots/twitter_bot.py`). Wiederverwendbare Komponenten liegen unter `modules/` (inkl. `modules/mastodon_bot_module.py` und `modules/telegram_bot_module.py`). CLI-Hilfsskripte liegen unter `tools/`, Shell-Hilfsskripte unter `scripts/`, statische Vorlagen unter `config/`. Projekt per Git synchronisiert.
 
 ## Build, Test, and Development Commands  
   **Tests:** `./venv/bin/pytest tests tests-unit`.

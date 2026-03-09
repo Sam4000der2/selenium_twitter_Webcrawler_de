@@ -2,7 +2,7 @@
 set -euo pipefail
 umask 077
 
-BASE_DIR="${BOTS_BASE_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+BASE_DIR="${BOTS_BASE_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 LOGFILE="${BOT_LOG_FILE:-$BASE_DIR/twitter_bot.log}"
 LOGDIR="$BASE_DIR/logs"
 PYTHON_BIN="${PYTHON_BIN:-$BASE_DIR/venv/bin/python3}"
@@ -12,9 +12,9 @@ ARCHIVED_LOG="$LOGDIR/twitter_bot.log.$YESTERDAY"
 
 cd -- "$BASE_DIR"
 if [ -x "$PYTHON_BIN" ]; then
-    "$PYTHON_BIN" store_twitter_logs.py
+    "$PYTHON_BIN" -m tools.store_twitter_logs_tool
 else
-    python3 store_twitter_logs.py
+    python3 -m tools.store_twitter_logs_tool
 fi
 
 mkdir -p "$LOGDIR"

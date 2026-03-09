@@ -1,6 +1,6 @@
 import json
 
-import migrate_telegram_data_json as migrator
+from tools import migrate_telegram_data_json_tool as migrator
 from modules import state_store_module as state_store
 from modules import storage_module as storage
 

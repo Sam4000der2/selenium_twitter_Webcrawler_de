@@ -3,8 +3,8 @@
 Einfaches Verwaltungsskript für die gemeinsame Datenbank (nitter_bot.db).
 Ohne Fachchinesisch: Du kannst Tabelleninhalte ansehen, Werte setzen oder löschen.
 
-Start: python3 manage_db.py [--db-path /pfad/zur/db]
-Ohne Angabe nimmt das Skript seinen eigenen Ordner und legt dort nitter_bot.db an.
+Start: python3 -m tools.manage_db_tool [--db-path /pfad/zur/db]
+Ohne Angabe nutzt das Skript den Standard aus NITTER_DB_PATH/BOTS_BASE_DIR.
 """
 
 from __future__ import annotations

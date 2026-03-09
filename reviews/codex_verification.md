@@ -4,59 +4,46 @@ Datum: 2026-03-09
 Repository: `/home/sascha/Dokumente/bots`
 
 ## Scope
-Verifikation gegen die vorgegebenen Akzeptanzkriterien:
-1. Sinnvolle Python-Ordnerstruktur (`bots/` Entrypoints, `modules/` wiederverwendbare Module)
-2. Einheitliche, klare Dateinamen (Bot vs. Modul)
-3. `mastodon_bot` und `telegram_bot` als Module (nicht Entrypoints)
-4. Keine Root-Wrapper für die Umstellung
-5. Relevante Tests/Lint grün
+Verifikation gegen diese Akzeptanzkriterien:
+1. Verbleibende Dateien sinnvoll in Unterordner sortiert (`tools/scripts/config`)
+2. `bots`/`modules` Trennung klar
+3. Referenzen angepasst
+4. Relevante Checks grün
 
-## Verifikationsergebnisse
+## Ergebnisse
 
-### 1) Ordnerstruktur sinnvoll
+### 1) Dateien sinnvoll in Unterordner sortiert
 Bestanden.
-- Entrypoints liegen in `bots/`:
-  - `bots/bsky_bot.py`
-  - `bots/mastodon_control_bot.py`
-  - `bots/nitter_bot.py`
-  - `bots/telegram_control_bot.py`
-  - `bots/twitter_bot.py`
-- Wiederverwendbare Komponenten liegen in `modules/` (u. a.):
-  - `modules/mastodon_bot_module.py`
-  - `modules/telegram_bot_module.py`
-  - weitere `*_module.py`-Dateien
+- CLI-/Wartungsdateien liegen unter `tools/`:
+  - `tools/manage_db_tool.py`
+  - `tools/migrate_telegram_data_json_tool.py`
+  - `tools/store_twitter_logs_tool.py`
+  - `tools/test_alt_text_tool.py`
+- Shell-Hilfsskript liegt unter `scripts/`:
+  - `scripts/rotate_twitter_log.sh`
+- Statische Vorlage liegt unter `config/`:
+  - `config/data.json.example`
+- Keine Python-Dateien mehr im Repo-Root (`root_py []`).
 
-### 2) Dateinamen klar und einheitlich
+### 2) Trennung `bots` vs `modules` klar
 Bestanden.
-- `bots/*.py` (ohne `__init__.py`) enden durchgängig auf `_bot.py`.
-- `modules/*.py` (ohne `__init__.py`) enden durchgängig auf `_module.py`.
-- Damit ist Bot-vs-Modul im Dateinamen eindeutig erkennbar.
+- Entrypoints liegen in `bots/` und folgen `*_bot.py` / `*_control_bot.py`.
+- Reusable Komponenten liegen in `modules/` und folgen `_module.py`.
+- Namensprüfung ergab:
+  - `bots_non_bot_suffix []`
+  - `modules_non_module_suffix []`
 
-### 3) `mastodon_bot` und `telegram_bot` sind Module
+### 3) Referenzen angepasst
 Bestanden.
-- Vorhanden als Module:
-  - `modules/mastodon_bot_module.py`
-  - `modules/telegram_bot_module.py`
-- Nicht als Entrypoint-Bots vorhanden (kein `bots/mastodon_bot.py`, kein `bots/telegram_bot.py`).
-- Entrypoints importieren die Module über `modules.*_module`.
+- Suche nach alten Root-Dateinamen (`manage_db.py`, `migrate_telegram_data_json.py`, `store_twitter_logs.py`, `test_alt_text.py`, `rotate_twitter_log.sh`) außerhalb `reviews/` ergab keine veralteten Referenzen.
+- Relevante Dokumentation zeigt neue Pfade, u. a.:
+  - `README.md` mit `config/data.json.example` und `python -m tools.test_alt_text_tool`
+  - `MEMORY.md` mit `tools/migrate_telegram_data_json_tool.py`
 
-### 4) Keine Root-Wrapper
+### 4) Relevante Checks grün
 Bestanden.
-- Python-Dateien im Repo-Root:
-  - `manage_db.py`
-  - `migrate_telegram_data_json.py`
-  - `store_twitter_logs.py`
-  - `test_alt_text.py`
-- Keine Root-Wrapper-Dateien wie `mastodon_bot.py`, `telegram_bot.py` (oder andere umstellungsbezogene Wrapper) vorhanden.
-
-### 5) Relevante Tests/Lint grün
-Bestanden.
-- Lint:
-  - Befehl: `./venv/bin/ruff check .`
-  - Ergebnis: `All checks passed!`
-- Tests:
-  - Befehl: `./venv/bin/python -m pytest tests tests-unit`
-  - Ergebnis: `26 passed in 0.23s`
-- Hinweis: `./venv/bin/pytest` war in dieser Umgebung nicht direkt ausführbar; Ausführung über `python -m pytest` ist funktional äquivalent und erfolgreich.
+- `./venv/bin/ruff check .` → `All checks passed!`
+- `./venv/bin/python -m compileall -q -x '(^|/)venv($|/)' .` → erfolgreich
+- `./venv/bin/python -m pytest tests tests-unit` → `26 passed`
 
 0 Findings
