@@ -6,7 +6,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 - Keine Snap-Pakete nutzen (Selenium + Snap machen Probleme); Firefox via Flatpak ist nicht getestet, Chrome ist möglich aber instabiler.
 - Twitter/X-Listen brauchen in der Regel einen eingeloggten Account. Nutze ein Firefox-Profil (`about:profiles`) und setze optional `TWITTER_FIREFOX_PROFILE_PATH`. Falls die Zielseite öffentlich ist, kannst du ohne Login arbeiten.
 - Geckodriver muss verfügbar sein (Default `/usr/local/bin/geckodriver`). Bei abweichendem Pfad setze `TWITTER_GECKODRIVER_PATH`.
-- Bestehende TXT/CSV/JSON-State-Dateien müssen in die neue DB (`nitter_bot.db`) migriert werden; ein separates Migrationsskript folgt.
+- Bestehende JSON-State-Dateien können mit `migrate_telegram_data_json.py` nach `nitter_bot.db` migriert werden.
 
 ## Komponenten
 - `twitter_bot.py`: Selenium-Scraper für eine X-Liste. Nutzt ein lokales Firefox-Profil, dedupliziert über die gemeinsame SQLite-DB `nitter_bot.db` und sendet neue Tweets an Telegram und Mastodon.
@@ -34,6 +34,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   - Gemini: `GEMINI_API_KEY` (optional zusätzlich: `GEMINI_API_KEY1` bis `GEMINI_API_KEY4` für Round-Robin)
   - Twitter/Selenium: `TWITTER_LIST_URL`, `TWITTER_GECKODRIVER_PATH`, optional `TWITTER_FIREFOX_PROFILE_PATH`
   - Optional: `MASTODON_CONTROL_EVENT_ENABLED|HOST|PORT`, `MASTODON_CONTROL_POLL_INTERVAL`
+  - Logging zentral: `BOTS_LOG_LEVEL` (Fallback `LOG_LEVEL`, z. B. `DEBUG`, `INFO`, `WARNING`, `ERROR`)
 
 > Hinweis: Laufzeitpfade werden zentral über `BOTS_BASE_DIR` gesteuert (Default: Repo-Ordner).  
   Die SQLite-DB kann über `NITTER_DB_PATH` umgezogen werden (Standard `$BOTS_BASE_DIR/nitter_bot.db`).
@@ -60,6 +61,9 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   - Chat-IDs und `filter_rules` werden in der DB gehalten; Verwaltung erfolgt über den Control-Bot.
   - `telegram_bot.py` verschickt Nachrichten an alle Chat-IDs; Filterwörter pro Chat entscheiden über Zustellung.
   - `telegram_control_bot.py` bietet Nutzer-Kommandos (Start/Stop/Status/Filter) und Admin-Kommandos (Service-Meldungen, Log-Fehler/Warnungen).
+  - Einmalige Migration einer bestehenden `data.json`:  
+    `python migrate_telegram_data_json.py --data-file ./data.json`  
+    Optional: `--dry-run` (nur prüfen) oder `--force` (bestehende Telegram-Daten in DB überschreiben).
 
 - **Mastodon**
   - Tokens aus ENV; je Instanz wird Sichtbarkeit anhand bekannter Accounts gewählt.
@@ -138,6 +142,7 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 
 ## Logging, Daten & Betrieb
 - Zentrales Log: `$BOTS_BASE_DIR/twitter_bot.log` (alle Module). Admin-Befehle in Telegram zeigen Auszüge.
+- Zentrales Logging-Level für alle Bots: `BOTS_LOG_LEVEL` (oder `LOG_LEVEL`).
 - Historien/Caches landen gesammelt in `nitter_bot.db` (Buckets u. a. für Twitter/Nitter-History, Bluesky-Feeds, Telegram-Filter, Mastodon-Regeln/-Posts, Gemini-Status).
 - Für Dauerbetrieb können systemd-Services genutzt werden (ExecStart läuft über `$BOTS_BASE_DIR`; `BOTS_BASE_DIR` wird im `EnvironmentFile` gesetzt).
 

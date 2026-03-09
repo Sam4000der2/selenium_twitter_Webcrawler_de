@@ -20,7 +20,7 @@ import requests
 
 import state_store
 from url_safety import validate_outbound_url
-from paths import LOG_FILE
+from paths import LOG_FILE, LOG_LEVEL
 _ENV_PARSE_WARNINGS: list[str] = []
 _telegram_bot_module = None
 _mastodon_bot_module = None
@@ -108,7 +108,7 @@ MENTION_RE = re.compile(r"(?<!\w)@([A-Za-z0-9_]{1,30})")
 
 logging.basicConfig(
     handlers=[WatchedFileHandler(LOG_FILE)],
-    level=logging.INFO,
+    level=LOG_LEVEL,
     format="%(asctime)s %(levelname)s %(message)s",
 )
 for _warning in _ENV_PARSE_WARNINGS:

@@ -6,12 +6,12 @@ from logging.handlers import WatchedFileHandler
 import re
 import time
 import state_store
-from paths import LOG_FILE
+from paths import LOG_FILE, LOG_LEVEL
 
 # Configure logging
 logging.basicConfig(
     handlers=[WatchedFileHandler(LOG_FILE)],
-    level=logging.INFO,
+    level=LOG_LEVEL,
     format='%(asctime)s %(levelname)s:%(message)s'
 )
 

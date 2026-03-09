@@ -21,7 +21,7 @@ import pytz
 import requests  # Neuer Import für URL-Erweiterung
 import state_store
 from url_safety import validate_outbound_url
-from paths import LOG_FILE
+from paths import LOG_FILE, LOG_LEVEL
 
 #print("Imports successful")
 
@@ -51,7 +51,7 @@ HISTORY_TRIM_TO = 50
 # Logging configuration
 logging.basicConfig(
     handlers=[WatchedFileHandler(LOG_FILE)],
-    level=logging.WARNING,
+    level=LOG_LEVEL,
     force=True,
 )
 #print("Logging configured")

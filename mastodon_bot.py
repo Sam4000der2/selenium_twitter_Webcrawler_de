@@ -25,7 +25,7 @@ from gemini_helper import GeminiModelManager
 from mastodon_text_utils import split_mastodon_text, sanitize_for_mastodon
 import mastodon_post_store
 import state_store
-from paths import LOG_FILE
+from paths import LOG_FILE, LOG_LEVEL
 
 GEMINI_KEY_ENV_VARS = [
     "GEMINI_API_KEY",
@@ -141,7 +141,7 @@ QUOTE_POLICY_DISABLED_VALUES = {"disabled", "deny", "disallow"}
 
 logging.basicConfig(
     handlers=[WatchedFileHandler(LOG_PATH)],
-    level=logging.INFO,
+    level=LOG_LEVEL,
     format='%(asctime)s %(levelname)s:%(message)s',
     force=True,
 )
@@ -150,18 +150,18 @@ logging.basicConfig(
 helper_logger = logging.getLogger("gemini_helper")
 if helper_logger.handlers:
     for h in list(helper_logger.handlers):
-        h.setLevel(logging.WARNING)
-helper_logger.setLevel(logging.WARNING)
+        h.setLevel(LOG_LEVEL)
+helper_logger.setLevel(LOG_LEVEL)
 helper_logger.propagate = True
 
-# Eigener Alt-Text-Logger mit INFO-Level, ohne globale Log-Flut.
+# Eigener Alt-Text-Logger auf zentralem LOG_LEVEL, ohne globale Log-Flut.
 alt_text_logger = logging.getLogger("mastodon_alt_text")
 if not alt_text_logger.handlers:
     _alt_handler = WatchedFileHandler(LOG_PATH)
-    _alt_handler.setLevel(logging.INFO)
+    _alt_handler.setLevel(LOG_LEVEL)
     _alt_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s:%(message)s'))
     alt_text_logger.addHandler(_alt_handler)
-alt_text_logger.setLevel(logging.INFO)
+alt_text_logger.setLevel(LOG_LEVEL)
 alt_text_logger.propagate = False
 logging.info("mastodon_bot: Logging configured.")
 

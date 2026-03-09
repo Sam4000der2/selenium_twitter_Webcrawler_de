@@ -18,7 +18,7 @@ from control_bot_utils import (
 from mastodon import Mastodon
 from mastodon_text_utils import split_mastodon_text
 import state_store
-from paths import BASE_DIR, LOG_FILE
+from paths import BASE_DIR, LOG_FILE, LOG_LEVEL
 
 # ----------------------------
 # Konstanten / Pfade
@@ -122,13 +122,13 @@ ACCOUNT_GROUPS = {
 def setup_logging():
     fmt = logging.Formatter(BOT_LOG_FORMAT)
     logger = logging.getLogger()
-    logger.setLevel(logging.WARNING)
+    logger.setLevel(LOG_LEVEL)
     if logger.handlers:
         logger.handlers.clear()
 
     try:
         handler = WatchedFileHandler(BOT_LOG_FILE)
-        handler.setLevel(logging.WARNING)
+        handler.setLevel(LOG_LEVEL)
         handler.setFormatter(fmt)
         logger.addHandler(handler)
     except Exception:
@@ -150,7 +150,7 @@ def _build_file_logger(name: str, *, level: int) -> logging.Logger:
     )
 
 
-PAUSE_INFO_LOGGER = _build_file_logger("mastodon_control_bot.pause", level=logging.INFO)
+PAUSE_INFO_LOGGER = _build_file_logger("mastodon_control_bot.pause", level=LOG_LEVEL)
 
 
 def _log_pause_info(message: str) -> None:

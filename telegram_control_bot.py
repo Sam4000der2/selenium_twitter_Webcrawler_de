@@ -15,7 +15,7 @@ from control_bot_utils import (
     should_pause_on_network_error,
 )
 from mastodon_text_utils import split_mastodon_text
-from paths import BASE_DIR, LOG_DIR as DEFAULT_LOG_DIR, LOG_FILE
+from paths import BASE_DIR, LOG_DIR as DEFAULT_LOG_DIR, LOG_FILE, LOG_LEVEL
 
 # Secrets aus ENV (global + local):
 #   TELEGRAM_TOKEN / telegram_token  -> Bot Token
@@ -48,7 +48,7 @@ except Exception:
 # Configure logging (für dieses Script)
 logging.basicConfig(
     handlers=[WatchedFileHandler(LOG_FILE)],
-    level=logging.WARNING,
+    level=LOG_LEVEL,
     format=BOT_LOG_FORMAT
 )
 
@@ -181,7 +181,7 @@ def _build_file_logger(name: str, *, level: int) -> logging.Logger:
     )
 
 
-PAUSE_INFO_LOGGER = _build_file_logger("telegram_control_bot.pause", level=logging.INFO)
+PAUSE_INFO_LOGGER = _build_file_logger("telegram_control_bot.pause", level=LOG_LEVEL)
 
 
 def _log_pause_info(message: str) -> None:

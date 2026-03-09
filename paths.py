@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -46,3 +47,25 @@ LOG_FILE = str(BASE_DIR / "twitter_bot.log")
 LOG_DIR = str(BASE_DIR / "logs")
 DATA_FILE = str(BASE_DIR / "data.json")
 DEFAULT_DB_PATH = str(BASE_DIR / "nitter_bot.db")
+
+
+def parse_log_level(value: str | None, default: int = logging.INFO) -> int:
+    if value is None:
+        return default
+    raw = str(value).strip()
+    if not raw:
+        return default
+    if raw.isdigit():
+        return int(raw)
+    parsed = logging.getLevelName(raw.upper())
+    return parsed if isinstance(parsed, int) else default
+
+
+def get_configured_log_level(default: int = logging.INFO) -> int:
+    return parse_log_level(
+        os.environ.get("BOTS_LOG_LEVEL") or os.environ.get("LOG_LEVEL"),
+        default=default,
+    )
+
+
+LOG_LEVEL = get_configured_log_level()

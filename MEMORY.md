@@ -8,3 +8,5 @@
 - `state_store.migrate_telegram_json_to_db(...)` imports legacy `data.json` into DB when needed.
 - `telegram_bot.py` and `telegram_control_bot.py` now read/write Telegram state via `state_store`.
 - Telegram migration tests: `tests-unit/test_storage_telegram_migration.py`.
+- Dedicated CLI migration script: `migrate_telegram_data_json.py` (`--dry-run`, `--force`, optional `--db-path`).
+- Central log level config: `BOTS_LOG_LEVEL` (fallback `LOG_LEVEL`) via `paths.LOG_LEVEL`.
