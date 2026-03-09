@@ -57,6 +57,32 @@ def test_handle_command_processes_explicit_slash_command(monkeypatch) -> None:
     assert sent[0]["text"] == "STATUS_OK"
 
 
+def test_handle_command_accepts_slash_command_with_trailing_parenthesis(monkeypatch) -> None:
+    sent: list[dict] = []
+
+    def fake_send_dm(_mastodon, acct: str, in_reply_to_id, text: str, include_tagging_hint: bool = True):
+        sent.append(
+            {
+                "acct": acct,
+                "in_reply_to_id": in_reply_to_id,
+                "text": text,
+                "include_tagging_hint": include_tagging_hint,
+            }
+        )
+
+    monkeypatch.setattr(bot, "send_dm", fake_send_dm)
+    monkeypatch.setattr(bot, "help_text", lambda: "HELP_OK")
+    bot.USER_STATES.clear()
+
+    status = {"id": 1005, "content": "<p>@controlbot /help)</p>"}
+    account = {"acct": "alice"}
+
+    _run(bot.handle_command(object(), "opnv_berlin", status, account))
+
+    assert len(sent) == 1
+    assert sent[0]["text"] == "HELP_OK"
+
+
 def test_handle_command_replies_for_unknown_explicit_slash_command(monkeypatch) -> None:
     sent: list[dict] = []
 

@@ -301,8 +301,9 @@ def clean_command_text(content: str) -> str:
 
 def parse_user_command(text: str) -> tuple[str | None, str]:
     """
-    Erkennt Befehle am Satzanfang, auch ohne Slash. URLs werden vorher entfernt,
-    damit https://... keine Fehl-Erkennung auslöst. Nur explizite Befehlswörter.
+    Erkennt Befehlswörter am Satzanfang. URLs werden vorher entfernt,
+    damit https://... keine Fehl-Erkennung auslöst.
+    Hinweis: Ob nur Slash-Befehle verarbeitet werden, entscheidet der Aufrufer.
     """
     if not text:
         return None, ""
@@ -316,7 +317,7 @@ def parse_user_command(text: str) -> tuple[str | None, str]:
         return None, ""
 
     first, *rest = stripped.split(maxsplit=1)
-    cmd_token = first.lstrip("/").lower().strip(".,;:!?")
+    cmd_token = first.lstrip("/").lower().strip(".,;:!?()[]{}")
 
     synonyms = {
         "status": ["status", "statusmeldung"],
