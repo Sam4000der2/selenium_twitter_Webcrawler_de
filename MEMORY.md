@@ -6,7 +6,10 @@
 - Issue #57 (2026-03-09): Telegram `data.json` storage migrated into `nitter_bot.db` normalized tables.
 - Normalized Telegram schema: `telegram_chats` + `telegram_filter_rules` (no JSON keywords blob).
 - `state_store.migrate_telegram_json_to_db(...)` imports legacy `data.json` into DB when needed.
-- `telegram_bot.py` and `telegram_control_bot.py` now read/write Telegram state via `state_store`.
+- `modules/telegram_bot_module.py` and `bots/telegram_control_bot.py` read/write Telegram state via `state_store`.
 - Telegram migration tests: `tests-unit/test_storage_telegram_migration.py`.
 - Dedicated CLI migration script: `migrate_telegram_data_json.py` (`--dry-run`, `--force`, optional `--db-path`).
-- Central log level config: `BOTS_LOG_LEVEL` (fallback `LOG_LEVEL`) via `paths.LOG_LEVEL`.
+- Central log level config: `BOTS_LOG_LEVEL` (fallback `LOG_LEVEL`) via `modules.paths_module.LOG_LEVEL`.
+- Canonical runtime layout: `bots/` for executable bots, `modules/` for reusable modules.
+- Naming convention: bots use `*_bot.py` / `*_control_bot.py`; modules use `_module.py`.
+- `modules/mastodon_bot_module.py` and `modules/telegram_bot_module.py` are modules (not bot entry files).

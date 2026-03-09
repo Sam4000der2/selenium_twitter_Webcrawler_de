@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import sys
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+    if str(_PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PROJECT_ROOT))
+
 import time
 import argparse
 import logging
@@ -15,10 +23,10 @@ import pytz
 
 # Falls du Telegram/Mastodon-Module hast, wie im Original
 # die erwartet async main(new_tweets) aufzurufen.
-import telegram_bot
-import mastodon_bot
-import state_store
-from paths import LOG_FILE, LOG_LEVEL
+from modules import telegram_bot_module as telegram_bot
+from modules import mastodon_bot_module as mastodon_bot
+from modules import state_store_module as state_store
+from modules.paths_module import LOG_FILE, LOG_LEVEL
 
 # -------------------------
 # Logging configuration

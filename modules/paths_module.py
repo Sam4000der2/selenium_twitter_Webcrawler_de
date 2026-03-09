@@ -25,7 +25,9 @@ def _ensure_writable_dir(path: Path) -> bool:
 
 
 def _resolve_base_dir() -> Path:
-    default_dir = Path(__file__).resolve().parent
+    # Default bleibt der Projekt-Root (ein Level über modules/),
+    # damit bestehende DB-/Log-/Data-Pfade kompatibel bleiben.
+    default_dir = Path(__file__).resolve().parents[1]
     requested_raw = os.environ.get("BOTS_BASE_DIR")
     requested = Path(requested_raw).expanduser() if requested_raw else default_dir
     try:

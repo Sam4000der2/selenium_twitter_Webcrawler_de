@@ -1,5 +1,13 @@
-import telegram_bot
-import mastodon_bot
+import sys
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+    if str(_PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PROJECT_ROOT))
+
+from modules import telegram_bot_module as telegram_bot
+from modules import mastodon_bot_module as mastodon_bot
 import time
 import re
 import asyncio
@@ -19,9 +27,9 @@ from selenium.common.exceptions import StaleElementReferenceException
 from dateutil.parser import parse
 import pytz
 import requests  # Neuer Import für URL-Erweiterung
-import state_store
-from url_safety import validate_outbound_url
-from paths import LOG_FILE, LOG_LEVEL
+from modules import state_store_module as state_store
+from modules.url_safety_module import validate_outbound_url
+from modules.paths_module import LOG_FILE, LOG_LEVEL
 
 #print("Imports successful")
 

@@ -15,8 +15,8 @@ import os
 from typing import Any
 from datetime import datetime
 
-import storage
-import state_store
+from modules import storage_module as storage
+from modules import state_store_module as state_store
 
 BUCKETS = {
     "telegram": ("telegram_config", "chat_config"),

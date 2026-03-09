@@ -87,13 +87,13 @@ Codex unterstützt Multi-Agent-Orchestrierung (Sub-Agents). citeturn0searc
 ## 5) Repository Guidelines
 
 ## Project Structure & Module Organization
-- this Project folder `bots/`: Social bots and monitors (see `bots/AGENTS.md` for bot-specific runbooks). Kopie von /home/sascha/bots. nitter_bot.py und bsky_feed_monitor.py sind die aktiv laufende Bots. twitter_bot.py ist der legacy Vorgänger vom nitter_bot.py, alle anderen Python Scripte sind Module. Projekt per Git synchronisiert.
+- this Project folder `bots/`: Social bots and monitors (see `bots/AGENTS.md` for bot-specific runbooks). Kopie von /home/sascha/bots. Aktive Entrypoints liegen unter `bots/` (z. B. `bots/nitter_bot.py`, `bots/bsky_bot.py`, `bots/twitter_bot.py`). Wiederverwendbare Komponenten liegen unter `modules/` (inkl. `modules/mastodon_bot_module.py` und `modules/telegram_bot_module.py`). Projekt per Git synchronisiert.
 
 ## Build, Test, and Development Commands  
   **Tests:** `./venv/bin/pytest tests tests-unit`.
 - **Bots:**  
   `source ./venv/bin/activate && python3 -m pytest`  
-  Run pipelines via `python3 nitter_bot.py` / `python3 mastodon_bot.py` after setting env tokens and Firefox profile.
+  Run pipelines via `python3 bots/nitter_bot.py` / `python3 bots/twitter_bot.py` after setting env tokens and Firefox profile.
 ## Coding Style & Naming Conventions
 - **Python:** 4-space indent, type hints where stable; use `ruff` for linting (as configured in this repo). Names in `snake_case`, constants `UPPER_SNAKE`.
 - **Nim:** run `nimpretty` on touched files; prefer `camelCase` procs and `TitleCase` types.

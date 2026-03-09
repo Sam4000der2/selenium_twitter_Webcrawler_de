@@ -2,8 +2,8 @@
 import time
 from pathlib import Path
 
-from state_store import store_archive_logs
-from paths import LOG_FILE
+from modules.state_store_module import store_archive_logs
+from modules.paths_module import LOG_FILE
 
 LOGFILE = Path(LOG_FILE)
 

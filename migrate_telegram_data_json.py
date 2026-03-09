@@ -7,9 +7,9 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict
 
-import state_store
-import storage
-from paths import DATA_FILE as DEFAULT_DATA_FILE
+from modules import state_store_module as state_store
+from modules import storage_module as storage
+from modules.paths_module import DATA_FILE as DEFAULT_DATA_FILE
 
 
 @dataclass(frozen=True)

@@ -1,3 +1,11 @@
+import sys
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+    if str(_PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PROJECT_ROOT))
+
 import asyncio
 import os
 import re
@@ -21,11 +29,11 @@ import aiohttp
 from mastodon import Mastodon
 from google import genai
 from google.genai import types  # <- für system_instruction
-from gemini_helper import GeminiModelManager
-from mastodon_text_utils import split_mastodon_text, sanitize_for_mastodon
-import mastodon_post_store
-import state_store
-from paths import LOG_FILE, LOG_LEVEL
+from modules.gemini_helper_module import GeminiModelManager
+from modules.mastodon_text_utils_module import split_mastodon_text, sanitize_for_mastodon
+from modules import mastodon_post_store_module as mastodon_post_store
+from modules import state_store_module as state_store
+from modules.paths_module import LOG_FILE, LOG_LEVEL
 
 GEMINI_KEY_ENV_VARS = [
     "GEMINI_API_KEY",

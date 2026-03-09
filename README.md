@@ -8,15 +8,19 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
 - Geckodriver muss verfügbar sein (Default `/usr/local/bin/geckodriver`). Bei abweichendem Pfad setze `TWITTER_GECKODRIVER_PATH`.
 - Bestehende JSON-State-Dateien können mit `migrate_telegram_data_json.py` nach `nitter_bot.db` migriert werden.
 
+## Projektstruktur
+- `bots/`: ausführbare Bot-Implementierungen (einheitlich mit `*_bot.py` bzw. `*_control_bot.py`)
+- `modules/`: wiederverwendbare Bot-Module (einheitlich mit `_module.py`)
+
 ## Komponenten
-- `twitter_bot.py`: Selenium-Scraper für eine X-Liste. Nutzt ein lokales Firefox-Profil, dedupliziert über die gemeinsame SQLite-DB `nitter_bot.db` und sendet neue Tweets an Telegram und Mastodon.
-- `nitter_bot.py`: Pollt die lokale Nitter-Instanz (`http://localhost:8081/<user>/rss`) statt Selenium/X. History und Nutzer-Intervalle liegen in `nitter_bot.db` und sollen den Twitter-Bot langfristig ersetzen.
-- `bsky_feed_monitor.py`: Pollt konfigurierte Bluesky-RSS-Feeds (z. B. VIZ Berlin) und leitet neue Einträge an Telegram/Mastodon weiter.
-- `telegram_bot.py`: Versendet Tweets/Feeds an alle in der DB hinterlegten Chats. Filterwörter pro Chat bestimmen, was zugestellt wird.
-- `telegram_control_bot.py`: Telegram-Bot zur Verwaltung von Chat-IDs und Filtern (`/start`, `/status`, `/addfilterrules`, `/deletefilterrules`, `/deleteallrules`, `/list`, `/about`, `/datenschutz`). Admin-Kommandos erlauben Service-Meldungen an alle Kanäle und Log-Auszüge.
-- `mastodon_bot.py`: Postet Tweets/Feeds auf `berlin.social`, `toot.berlin` und `mastodon.berlin` (Tokens aus ENV). Unterstützt Bilder/Videos, generiert Alt-Texte via Gemini und taggt Nutzer basierend auf DB-Regeln.
-- `mastodon_control_bot.py`: Mastodon-DM-Bot zum Verwalten der Tagging-Regeln (`/start`, `/add`, `/list`, `/overview`, `/delete`, `/pause`, `/resume`, `/schedule`, `/stop`). Lauscht optional auf Events vom Posting-Bot.
-- `gemini_helper.py` + `test_alt_text.py`: Modellverwaltung für Gemini (Cache in der DB) und Offline/Online-Test der Alt-Text-Generierung (`python test_alt_text.py --image <pfad> [--dummy]`).
+- `bots/twitter_bot.py`: Selenium-Scraper für eine X-Liste. Nutzt ein lokales Firefox-Profil, dedupliziert über die gemeinsame SQLite-DB `nitter_bot.db` und sendet neue Tweets an Telegram und Mastodon.
+- `bots/nitter_bot.py`: Pollt die lokale Nitter-Instanz (`http://localhost:8081/<user>/rss`) statt Selenium/X. History und Nutzer-Intervalle liegen in `nitter_bot.db` und sollen den Twitter-Bot langfristig ersetzen.
+- `bots/bsky_bot.py`: Pollt konfigurierte Bluesky-RSS-Feeds (z. B. VIZ Berlin) und leitet neue Einträge an Telegram/Mastodon weiter.
+- `modules/telegram_bot_module.py`: Versendet Tweets/Feeds an alle in der DB hinterlegten Chats. Filterwörter pro Chat bestimmen, was zugestellt wird.
+- `bots/telegram_control_bot.py`: Telegram-Bot zur Verwaltung von Chat-IDs und Filtern (`/start`, `/status`, `/addfilterrules`, `/deletefilterrules`, `/deleteallrules`, `/list`, `/about`, `/datenschutz`). Admin-Kommandos erlauben Service-Meldungen an alle Kanäle und Log-Auszüge.
+- `modules/mastodon_bot_module.py`: Postet Tweets/Feeds auf `berlin.social`, `toot.berlin` und `mastodon.berlin` (Tokens aus ENV). Unterstützt Bilder/Videos, generiert Alt-Texte via Gemini und taggt Nutzer basierend auf DB-Regeln.
+- `bots/mastodon_control_bot.py`: Mastodon-DM-Bot zum Verwalten der Tagging-Regeln (`/start`, `/add`, `/list`, `/overview`, `/delete`, `/pause`, `/resume`, `/schedule`, `/stop`). Lauscht optional auf Events vom Posting-Bot.
+- `modules/gemini_helper_module.py` + `test_alt_text.py`: Modellverwaltung für Gemini (Cache in der DB) und Offline/Online-Test der Alt-Text-Generierung (`python test_alt_text.py --image <pfad> [--dummy]`).
 - Daten/Logs: zentrale SQLite-DB `nitter_bot.db` (Chat-Filter, Mastodon-Regeln, Gemini-Cache, Histories inkl. Mastodon-Posts) und Log unter `$BOTS_BASE_DIR/twitter_bot.log` (Default: aktueller Repo-Ordner).
 - Legacy-Telegram-State: `data.json` ist eine lokale Laufzeitdatei (nicht versioniert). Im Repo liegt nur `data.json.example` als Vorlage.
 
@@ -40,27 +44,27 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   Die SQLite-DB kann über `NITTER_DB_PATH` umgezogen werden (Standard `$BOTS_BASE_DIR/nitter_bot.db`).
 
 ## Konfiguration
-- **Twitter/X-Scraper (`twitter_bot.py`)**
+- **Twitter/X-Scraper (`bots/twitter_bot.py`)**
   - Quell-Liste per `TWITTER_LIST_URL` konfigurieren (Fallback: interner Default).
   - Firefox-Profil optional über `TWITTER_FIREFOX_PROFILE_PATH`, Geckodriver über `TWITTER_GECKODRIVER_PATH` (Default `/usr/local/bin/geckodriver`).
   - Neue Links werden in `nitter_bot.db` dedupliziert; `var_href` wird beim Telegram-Versand auf `nitter.net` umgeschrieben.
   - Kurz-URLs werden erweitert; Bilder/Videos und externe Links gehen an Mastodon weiter.
   - Optional ohne Login: `TWITTER_FIREFOX_PROFILE_PATH` nicht setzen.
 
-- **Nitter-RSS (`nitter_bot.py`)**
+- **Nitter-RSS (`bots/nitter_bot.py`)**
   - Arbeitet gegen `NITTER_BASE_URL` (Standard `http://localhost:8081`) und liest Accounts samt Intervallen/Zeitfenstern aus der DB (Default-Seed wie bisher).
   - Loop-Fallback-Sleep: 60 s (`NITTER_POLL_INTERVAL`), pro Account gelten die in der DB gespeicherten Intervalle (z. B. `SBahnBerlin` mit 120 s von 05:55–22:05).
   - Dedupliziert per DB-History und baut die Status-Links zu `x.com/<user>/status/<id>` für Telegram/Mastodon.
   - History-Limit per `NITTER_HISTORY_LIMIT` einstellbar; `NITTER_POLL_INTERVAL` steuert das Loop-Fallback-Sleep (min. 15 s).
 
-- **Bluesky-Feeds (`bsky_feed_monitor.py`)**
+- **Bluesky-Feeds (`bots/bsky_bot.py`)**
   - FEEDS-Liste anpassen (`name`, `url`, optional `max_entries`). History pro Feed wird in der DB gehalten.
   - Pollt alle 60 s und nutzt dieselben Bot-Module für die Auslieferung.
 
 - **Telegram**
   - Chat-IDs und `filter_rules` werden in der DB gehalten; Verwaltung erfolgt über den Control-Bot.
-  - `telegram_bot.py` verschickt Nachrichten an alle Chat-IDs; Filterwörter pro Chat entscheiden über Zustellung.
-  - `telegram_control_bot.py` bietet Nutzer-Kommandos (Start/Stop/Status/Filter) und Admin-Kommandos (Service-Meldungen, Log-Fehler/Warnungen).
+  - `modules/telegram_bot_module.py` verschickt Nachrichten an alle Chat-IDs; Filterwörter pro Chat entscheiden über Zustellung.
+  - `bots/telegram_control_bot.py` bietet Nutzer-Kommandos (Start/Stop/Status/Filter) und Admin-Kommandos (Service-Meldungen, Log-Fehler/Warnungen).
   - Einmalige Migration einer bestehenden `data.json`:  
     `python migrate_telegram_data_json.py --data-file ./data.json`  
     Optional: `--dry-run` (nur prüfen) oder `--force` (bestehende Telegram-Daten in DB überschreiben).
@@ -69,18 +73,18 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   - Tokens aus ENV; je Instanz wird Sichtbarkeit anhand bekannter Accounts gewählt.
   - Alt-Texte pro Bild/Video via Gemini (Fallback-Text bei Fehlern); Modelle werden gecached und Quoten respektiert.
   - Tagging-Regeln liegen in der DB (DM/Tag, Zeitfenster, Block-/Allow-Keywords). Verwaltung erfolgt über den Mastodon-Control-Bot.
-  - Event-Brücke: `mastodon_bot` kann nach erfolgreichem Post per TCP an `MASTODON_CONTROL_EVENT_HOST:PORT` senden, damit `mastodon_control_bot` Status-Updates sieht.
+  - Event-Brücke: `modules/mastodon_bot_module.py` kann nach erfolgreichem Post per TCP an `MASTODON_CONTROL_EVENT_HOST:PORT` senden, damit `bots/mastodon_control_bot.py` Status-Updates sieht.
 
 ## Starten
 1) Virtuelle Umgebung aktivieren:  
    `export BOTS_BASE_DIR="$(pwd)" && source "$BOTS_BASE_DIR/venv/bin/activate"`
 
 2) Bots starten (je nach Bedarf separate Prozesse/Services):
-   - X-Scraper: `python twitter_bot.py`
-   - Nitter-RSS (ohne Selenium): `python nitter_bot.py`
-   - Bluesky-Feeds: `python bsky_feed_monitor.py`
-   - Telegram-Control: `python telegram_control_bot.py`
-   - Mastodon-Control: `python mastodon_control_bot.py`
+   - X-Scraper: `python bots/twitter_bot.py`
+   - Nitter-RSS (ohne Selenium): `python bots/nitter_bot.py`
+   - Bluesky-Feeds: `python bots/bsky_bot.py`
+   - Telegram-Control: `python bots/telegram_control_bot.py`
+   - Mastodon-Control: `python bots/mastodon_control_bot.py`
 
 3) Alt-Texte testen (ohne Posten):  
    `python test_alt_text.py --dummy` (offline) oder `python test_alt_text.py --image <pfad>` mit gesetztem `GEMINI_API_KEY` (optional plus `GEMINI_API_KEY1..4`).
@@ -130,8 +134,8 @@ Dieses Verzeichnis enthält die Bots, die ÖPNV-Meldungen von Twitter/X (per Sel
   sudo chmod 600 /etc/twitter_bot.env
   ```
 - Manuell testen ohne Service:  
-  `set -a; source /etc/twitter_bot.env; set +a; export BOTS_BASE_DIR="$(pwd)"; python twitter_bot.py`  
-  (analog für `bsky_feed_monitor.py`, `telegram_control_bot.py`, `mastodon_control_bot.py`).
+  `set -a; source /etc/twitter_bot.env; set +a; export BOTS_BASE_DIR="$(pwd)"; python bots/twitter_bot.py`  
+  (analog für `bots/bsky_bot.py`, `bots/telegram_control_bot.py`, `bots/mastodon_control_bot.py`).
 - Installation (Beispiel `twitter_bot`):
   ```bash
   sudo cp services/twitter_bot.service /etc/systemd/system/twitter_bot.service

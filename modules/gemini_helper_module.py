@@ -3,7 +3,7 @@ import re
 from datetime import datetime, timedelta
 from typing import List
 
-import state_store
+from modules import state_store_module as state_store
 
 logger = logging.getLogger(__name__)
 

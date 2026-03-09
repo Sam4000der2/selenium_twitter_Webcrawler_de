@@ -1,4 +1,4 @@
-from mastodon_text_utils import sanitize_for_mastodon, split_mastodon_text
+from modules.mastodon_text_utils_module import sanitize_for_mastodon, split_mastodon_text
 
 
 def test_sanitize_for_mastodon_rewrites_mentions_and_x_links() -> None:

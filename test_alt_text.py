@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PIL import Image
 
-import mastodon_bot
+from modules import mastodon_bot_module as mastodon_bot
 
 
 class DummyModels:

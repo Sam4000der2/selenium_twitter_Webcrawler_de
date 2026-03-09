@@ -1,3 +1,11 @@
+import sys
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+    if str(_PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PROJECT_ROOT))
+
 import asyncio
 import os
 import telegram
@@ -5,8 +13,8 @@ import logging
 from logging.handlers import WatchedFileHandler
 import re
 import time
-import state_store
-from paths import LOG_FILE, LOG_LEVEL
+from modules import state_store_module as state_store
+from modules.paths_module import LOG_FILE, LOG_LEVEL
 
 # Configure logging
 logging.basicConfig(

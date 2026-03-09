@@ -1,3 +1,11 @@
+import sys
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+    if str(_PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PROJECT_ROOT))
+
 import asyncio
 import html
 import json
@@ -10,15 +18,15 @@ import time as time_module
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from control_bot_utils import (
+from modules.control_bot_utils_module import (
     build_file_logger,
     describe_network_error,
     should_pause_on_network_error,
 )
 from mastodon import Mastodon
-from mastodon_text_utils import split_mastodon_text
-import state_store
-from paths import BASE_DIR, LOG_FILE, LOG_LEVEL
+from modules.mastodon_text_utils_module import split_mastodon_text
+from modules import state_store_module as state_store
+from modules.paths_module import BASE_DIR, LOG_FILE, LOG_LEVEL
 
 # ----------------------------
 # Konstanten / Pfade

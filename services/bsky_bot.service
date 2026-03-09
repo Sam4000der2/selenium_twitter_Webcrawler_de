@@ -6,7 +6,7 @@ After=network-online.target
 [Service]
 EnvironmentFile=/etc/twitter_bot.env
 WorkingDirectory=%h
-ExecStart=/bin/bash -lc '"${BOTS_BASE_DIR:?missing BOTS_BASE_DIR}/venv/bin/python3" "${BOTS_BASE_DIR:?missing BOTS_BASE_DIR}/bsky_feed_monitor.py"'
+ExecStart=/bin/bash -lc '"${BOTS_BASE_DIR:?missing BOTS_BASE_DIR}/venv/bin/python3" "${BOTS_BASE_DIR:?missing BOTS_BASE_DIR}/bots/bsky_bot.py"'
 Restart=always
 RestartSec=10
 User=sascha

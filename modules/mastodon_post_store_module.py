@@ -2,7 +2,7 @@ import logging
 import time
 from typing import Optional
 
-import storage
+from modules import storage_module as storage
 
 RETENTION_SECONDS = 7 * 24 * 60 * 60
 BUCKET = "mastodon_posts"

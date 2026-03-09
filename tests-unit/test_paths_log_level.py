@@ -1,6 +1,6 @@
 import logging
 
-import paths
+from modules import paths_module as paths
 
 
 def test_parse_log_level_supports_named_levels() -> None:

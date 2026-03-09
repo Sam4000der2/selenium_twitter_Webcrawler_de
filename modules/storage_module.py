@@ -3,7 +3,7 @@ import os
 import sqlite3
 import time
 from typing import Any, Dict, Iterable, Tuple
-from paths import DEFAULT_DB_PATH
+from modules.paths_module import DEFAULT_DB_PATH
 
 DB_PATH = (
     os.environ.get("NITTER_DB_PATH")

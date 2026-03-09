@@ -1,5 +1,13 @@
-import telegram_bot
-import mastodon_bot
+import sys
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+    if str(_PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PROJECT_ROOT))
+
+from modules import telegram_bot_module as telegram_bot
+from modules import mastodon_bot_module as mastodon_bot
 import asyncio
 import os
 import telegram
@@ -8,14 +16,14 @@ import logging
 from logging.handlers import WatchedFileHandler
 import subprocess
 import re
-import state_store
-from control_bot_utils import (
+from modules import state_store_module as state_store
+from modules.control_bot_utils_module import (
     build_file_logger,
     describe_network_error,
     should_pause_on_network_error,
 )
-from mastodon_text_utils import split_mastodon_text
-from paths import BASE_DIR, LOG_DIR as DEFAULT_LOG_DIR, LOG_FILE, LOG_LEVEL
+from modules.mastodon_text_utils_module import split_mastodon_text
+from modules.paths_module import BASE_DIR, LOG_DIR as DEFAULT_LOG_DIR, LOG_FILE, LOG_LEVEL
 
 # Secrets aus ENV (global + local):
 #   TELEGRAM_TOKEN / telegram_token  -> Bot Token

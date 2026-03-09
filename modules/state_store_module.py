@@ -5,8 +5,8 @@ import os
 import time
 from typing import Any, Dict, Iterable, List
 
-import storage
-from paths import DATA_FILE as DEFAULT_DATA_FILE
+from modules import storage_module as storage
+from modules.paths_module import DATA_FILE as DEFAULT_DATA_FILE
 
 TELEGRAM_BUCKET = "telegram_config"
 TELEGRAM_KEY = "chat_config"

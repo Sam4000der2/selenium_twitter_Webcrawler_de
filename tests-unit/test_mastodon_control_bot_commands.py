@@ -1,6 +1,6 @@
 import asyncio
 
-import mastodon_control_bot as bot
+from bots import mastodon_control_bot as bot
 
 
 def _run(coro):

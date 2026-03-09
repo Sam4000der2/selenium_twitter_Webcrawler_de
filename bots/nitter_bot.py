@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+import sys
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    _PROJECT_ROOT = Path(__file__).resolve().parents[1]
+    if str(_PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PROJECT_ROOT))
+
 import argparse
 import asyncio
 import html
@@ -18,9 +26,9 @@ from dateutil.parser import parse
 import pytz
 import requests
 
-import state_store
-from url_safety import validate_outbound_url
-from paths import LOG_FILE, LOG_LEVEL
+from modules import state_store_module as state_store
+from modules.url_safety_module import validate_outbound_url
+from modules.paths_module import LOG_FILE, LOG_LEVEL
 _ENV_PARSE_WARNINGS: list[str] = []
 _telegram_bot_module = None
 _mastodon_bot_module = None
@@ -29,9 +37,9 @@ _mastodon_bot_module = None
 def _load_delivery_modules():
     global _telegram_bot_module, _mastodon_bot_module
     if _telegram_bot_module is None:
-        _telegram_bot_module = importlib.import_module("telegram_bot")
+        _telegram_bot_module = importlib.import_module("modules.telegram_bot_module")
     if _mastodon_bot_module is None:
-        _mastodon_bot_module = importlib.import_module("mastodon_bot")
+        _mastodon_bot_module = importlib.import_module("modules.mastodon_bot_module")
     return _telegram_bot_module, _mastodon_bot_module
 
 
