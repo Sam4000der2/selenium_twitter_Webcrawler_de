@@ -13,3 +13,6 @@ venc/
 data.json
 logs/
 *.db
+*.db-*
+*.sqlite
+*.sqlite3
