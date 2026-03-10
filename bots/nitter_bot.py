@@ -129,6 +129,8 @@ logging.basicConfig(
     level=LOG_LEVEL,
     format="%(asctime)s %(levelname)s %(message)s",
 )
+for _noisy_logger in ("httpx", "httpcore", "urllib3", "telegram"):
+    logging.getLogger(_noisy_logger).setLevel(logging.WARNING)
 for _warning in _ENV_PARSE_WARNINGS:
     logging.warning(_warning)
 
@@ -983,7 +985,7 @@ def parse_entry(entry, feed_username: str, basics: dict | None = None):
 
 def fetch_feed(username: str):
     feed_url = f"{NITTER_BASE_URL}/{username}/rss"
-    logging.info(f"nitter_bot: Prüfe Feed {feed_url}")
+    logging.debug(f"nitter_bot: Prüfe Feed {feed_url}")
     feed = feedparser.parse(feed_url)
     if getattr(feed, "bozo", False):
         logging.warning(f"nitter_bot: feedparser bozo für {feed_url}: {getattr(feed, 'bozo_exception', None)}")
@@ -1043,7 +1045,7 @@ def collect_for_user(
                 user_history.append(history_entry)
                 history_changed = True
             age_minutes = (now_ts - float(published_ts)) / 60
-            logging.info(
+            logging.debug(
                 f"nitter_bot: Überspringe alten Eintrag {status_id} von {username} "
                 f"({age_minutes:.1f} Minuten)."
             )
@@ -1124,7 +1126,7 @@ async def main():
 
     history_map, seen_ids, history_needs_save = load_history(persist=persist_history)
     if not persist_history and history_needs_save:
-        logging.info("nitter_bot: History wurde bereinigt (Debug-Modus), Änderungen nicht gespeichert.")
+        logging.debug("nitter_bot: History wurde bereinigt (Debug-Modus), Änderungen nicht gespeichert.")
         history_needs_save = False
     per_user_limits: dict[str, int] = {}
 

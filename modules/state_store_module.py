@@ -119,6 +119,29 @@ def save_telegram_data(data: Dict[str, Any]):
     storage.write_value(TELEGRAM_BUCKET, TELEGRAM_KEY, cleaned)
 
 
+def remove_telegram_chat(chat_id: int | str) -> bool:
+    try:
+        chat_key = str(int(str(chat_id).strip()))
+    except Exception:
+        return False
+
+    data = load_telegram_data()
+    chat_ids = data.get("chat_ids", {}) if isinstance(data, dict) else {}
+    filter_rules = data.get("filter_rules", {}) if isinstance(data, dict) else {}
+
+    changed = False
+    if isinstance(chat_ids, dict) and chat_key in chat_ids:
+        del chat_ids[chat_key]
+        changed = True
+    if isinstance(filter_rules, dict) and chat_key in filter_rules:
+        del filter_rules[chat_key]
+        changed = True
+
+    if changed:
+        save_telegram_data({"chat_ids": chat_ids, "filter_rules": filter_rules})
+    return changed
+
+
 def load_mastodon_rules() -> Dict[str, Any]:
     data = storage.read_value(MASTODON_RULES_BUCKET, MASTODON_RULES_KEY, {"users": {}})
     if not isinstance(data, dict):
@@ -405,6 +428,22 @@ def remove_failed_delivery(delivery_id: int):
     with storage.get_connection() as conn:
         conn.execute("DELETE FROM failed_deliveries WHERE id = ?", (int(delivery_id),))
         conn.commit()
+
+
+def remove_failed_deliveries_for_target(channel: str, target: int | str) -> int:
+    if channel not in FAILED_DELIVERIES_CHANNELS:
+        return 0
+
+    storage.init_db()
+    target_str = str(target)
+    with storage.get_connection() as conn:
+        cur = conn.execute(
+            "DELETE FROM failed_deliveries WHERE channel = ? AND target = ?",
+            (channel, target_str),
+        )
+        conn.commit()
+    rowcount = getattr(cur, "rowcount", 0)
+    return int(rowcount if isinstance(rowcount, int) and rowcount > 0 else 0)
 
 
 def prune_failed_deliveries(max_age_days: int = 14):

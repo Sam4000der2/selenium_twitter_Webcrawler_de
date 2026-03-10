@@ -23,6 +23,9 @@ logging.basicConfig(
     format='%(asctime)s %(levelname)s:%(message)s'
 )
 
+for _noisy_logger in ("httpx", "httpcore", "urllib3", "telegram"):
+    logging.getLogger(_noisy_logger).setLevel(logging.WARNING)
+
 # Secrets aus ENV (global + local):
 #   TELEGRAM_TOKEN / telegram_token  -> Bot Token
 #   TELEGRAM_ADMIN / telegram_admin  -> Admin Chat-ID
@@ -99,6 +102,25 @@ def _is_retryable_send_error(error_text: str) -> bool:
     return any(token in msg for token in retry_tokens)
 
 
+def _is_blocked_by_user_error(error_text: str) -> bool:
+    msg = (error_text or "").lower()
+    blocked_tokens = (
+        "forbidden: bot was blocked by user",
+        "forbidden: bot was blocked by the user",
+    )
+    return any(token in msg for token in blocked_tokens)
+
+
+def _cleanup_blocked_chat(chat_id: int, error_text: str) -> None:
+    removed_chat_state = state_store.remove_telegram_chat(chat_id)
+    removed_retry_jobs = state_store.remove_failed_deliveries_for_target("telegram", chat_id)
+    logging.warning(
+        "telegram_bot: Chat hat den Bot blockiert; Daten entfernt "
+        f"(chat_id={chat_id}, chat_state_removed={removed_chat_state}, "
+        f"retry_jobs_removed={removed_retry_jobs}). Fehler: {error_text}"
+    )
+
+
 def replace_x_links_with_nitter(text: str) -> str:
     if not text:
         return ""
@@ -152,6 +174,8 @@ async def _process_pending_telegram_retries(bot):
     if not pending:
         return
 
+    blocked_chat_ids: set[int] = set()
+
     for entry in pending:
         delivery_id = int(entry.get("id", 0))
         payload = entry.get("payload", {}) if isinstance(entry.get("payload"), dict) else {}
@@ -168,10 +192,23 @@ async def _process_pending_telegram_retries(bot):
             logging.error(f"telegram_bot: Retry-Job {delivery_id} verworfen (ungültige chat_id={chat_id_raw}).")
             continue
 
+        if chat_id in blocked_chat_ids:
+            state_store.remove_failed_delivery(delivery_id)
+            continue
+
         ok, err_txt = await send_telegram_message(bot, chat_id, message)
         if ok:
             state_store.remove_failed_delivery(delivery_id)
-            logging.info(f"telegram_bot: Retry-Job {delivery_id} erfolgreich an chat_id={chat_id}.")
+            logging.debug(f"telegram_bot: Retry-Job {delivery_id} erfolgreich an chat_id={chat_id}.")
+            continue
+
+        if _is_blocked_by_user_error(err_txt):
+            blocked_chat_ids.add(chat_id)
+            logging.warning(
+                f"telegram_bot: Retry-Job {delivery_id} wird entfernt "
+                f"(chat_id={chat_id}), weil der Bot blockiert wurde."
+            )
+            state_store.remove_failed_delivery(delivery_id)
             continue
 
         prev_attempt_count = int(entry.get("attempt_count", 0))
@@ -204,7 +241,7 @@ async def _process_pending_telegram_retries(bot):
         )
 
 
-async def send_telegram_message(bot, chat_id, message):
+async def send_telegram_message(bot, chat_id, message, blocked_chat_ids: set[int] | None = None):
     total_attempts = 1 + len(IMMEDIATE_SEND_RETRY_DELAYS_SECONDS)
     for attempt in range(1, total_attempts + 1):
         try:
@@ -217,6 +254,16 @@ async def send_telegram_message(bot, chat_id, message):
             return True, ""
         except Exception as e:
             err_txt = str(e)
+            if _is_blocked_by_user_error(err_txt):
+                try:
+                    chat_id_int = int(chat_id)
+                except Exception:
+                    chat_id_int = None
+                if chat_id_int is not None:
+                    if blocked_chat_ids is not None:
+                        blocked_chat_ids.add(chat_id_int)
+                    _cleanup_blocked_chat(chat_id_int, err_txt)
+                return False, err_txt
             if attempt <= len(IMMEDIATE_SEND_RETRY_DELAYS_SECONDS) and _is_retryable_send_error(err_txt):
                 delay = IMMEDIATE_SEND_RETRY_DELAYS_SECONDS[attempt - 1]
                 logging.warning(
@@ -228,6 +275,17 @@ async def send_telegram_message(bot, chat_id, message):
             logging.warning(f"telegram_bot: Fehler in def send_telegram_message (chat_id={chat_id}): {err_txt}")
             return False, err_txt
     return False, "Unbekannter Sendefehler"
+
+
+async def _send_or_enqueue_retry(bot, chat_id: int, message: str, blocked_chat_ids: set[int]) -> None:
+    if chat_id in blocked_chat_ids:
+        return
+    ok, err_txt = await send_telegram_message(bot, chat_id, message, blocked_chat_ids=blocked_chat_ids)
+    if ok:
+        return
+    if _is_blocked_by_user_error(err_txt):
+        return
+    _enqueue_telegram_retry(chat_id, message, err_txt)
 
 
 async def send_telegram_picture(bot, chat_id, images):
@@ -256,6 +314,8 @@ async def main(new_tweets):
 
     my_filter = load_data()
 
+    blocked_chat_ids: set[int] = set()
+
     try:
         for n, tweet in enumerate(new_tweets, start=1):
             username = tweet['username']
@@ -277,28 +337,20 @@ async def main(new_tweets):
                 keywords = entries["keywords"]
 
                 if username == "Servicemeldung":
-                    ok, err_txt = await send_telegram_message(bot, chat_id, message)
-                    if not ok:
-                        _enqueue_telegram_retry(chat_id, message, err_txt)
+                    await _send_or_enqueue_retry(bot, chat_id, message, blocked_chat_ids)
 
                 elif username == "me_1234_me":
                     # admin ist bereits int oder None
                     target_admin = admin if admin is not None else chat_id
-                    ok, err_txt = await send_telegram_message(bot, target_admin, message)
-                    if not ok:
-                        _enqueue_telegram_retry(target_admin, message, err_txt)
+                    await _send_or_enqueue_retry(bot, target_admin, message, blocked_chat_ids)
 
                 elif not keywords:
-                    ok, err_txt = await send_telegram_message(bot, chat_id, message)
-                    if not ok:
-                        _enqueue_telegram_retry(chat_id, message, err_txt)
+                    await _send_or_enqueue_retry(bot, chat_id, message, blocked_chat_ids)
 
                 else:
                     keywordincontent = any(keyword in content for keyword in keywords)
                     if keywordincontent:
-                        ok, err_txt = await send_telegram_message(bot, chat_id, message)
-                        if not ok:
-                            _enqueue_telegram_retry(chat_id, message, err_txt)
+                        await _send_or_enqueue_retry(bot, chat_id, message, blocked_chat_ids)
                         # await send_telegram_picture(bot, chat_id, images)
 
     except Exception as e:

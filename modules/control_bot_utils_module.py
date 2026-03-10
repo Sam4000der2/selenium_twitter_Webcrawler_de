@@ -50,6 +50,10 @@ TLS_ERROR_MARKERS = (
 
 HTTP_GATEWAY_STATUS_RX = re.compile(r"\b(?:502|503|504)\b")
 TIMEOUT_ERROR_RX = re.compile(r"\btime[ -]?out\b")
+LOG_LEVEL_PREFIX_RX = re.compile(
+    r"^(?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL)\s*:?\s*(?P<body>.*)$",
+    re.IGNORECASE,
+)
 
 
 def build_file_logger(
@@ -79,6 +83,21 @@ def build_file_logger(
     handler.setFormatter(logging.Formatter(log_format))
     logger.addHandler(handler)
     return logger
+
+
+def split_log_level_and_body(rest: str) -> tuple[str | None, str]:
+    """
+    Unterstützt beide Formate:
+      - "INFO:foo"
+      - "INFO foo"
+    """
+    message = (rest or "").lstrip()
+    match = LOG_LEVEL_PREFIX_RX.match(message)
+    if not match:
+        return None, message
+    level = (match.group("level") or "").upper() or None
+    body = (match.group("body") or "").lstrip()
+    return level, body
 
 
 def _contains_any_marker(error_text: str, markers: tuple[str, ...]) -> bool:

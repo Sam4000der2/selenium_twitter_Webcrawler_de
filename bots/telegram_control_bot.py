@@ -20,6 +20,7 @@ from modules import state_store_module as state_store
 from modules.control_bot_utils_module import (
     build_file_logger,
     describe_network_error,
+    split_log_level_and_body,
     should_pause_on_network_error,
 )
 from modules.mastodon_text_utils_module import split_mastodon_text
@@ -59,6 +60,9 @@ logging.basicConfig(
     level=LOG_LEVEL,
     format=BOT_LOG_FORMAT
 )
+
+for _noisy_logger in ("httpx", "httpcore", "urllib3", "telegram"):
+    logging.getLogger(_noisy_logger).setLevel(logging.WARNING)
 
 # Zentrales Bot-Logfile (alle Module schreiben hier rein)
 BOT_LOG_FILE = LOG_FILE
@@ -586,19 +590,11 @@ def parse_ts_and_rest(line: str) -> tuple[datetime | None, str]:
 
 def split_level_and_body(rest: str) -> tuple[str | None, str]:
     """
-    Zerlegt 'ERROR:foo' oder 'WARNING:foo' in (Level, Body).
-    Body enthält alles nach dem ersten ':'.
+    Zerlegt Logging-Rest in (Level, Body), robust für:
+      - "INFO:foo"
+      - "INFO foo"
     """
-    r = (rest or "").lstrip()
-    if r.startswith("ERROR"):
-        parts = r.split(":", 1)
-        body = parts[1].lstrip() if len(parts) > 1 else ""
-        return "ERROR", body
-    if r.startswith("WARNING"):
-        parts = r.split(":", 1)
-        body = parts[1].lstrip() if len(parts) > 1 else ""
-        return "WARNING", body
-    return None, r
+    return split_log_level_and_body(rest)
 
 
 def detect_bot_and_message(rest: str, bot_names: list[str]) -> tuple[str, str]:

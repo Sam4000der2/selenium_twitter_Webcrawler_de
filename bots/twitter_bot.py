@@ -62,6 +62,8 @@ logging.basicConfig(
     level=LOG_LEVEL,
     force=True,
 )
+for _noisy_logger in ("httpx", "httpcore", "urllib3", "telegram"):
+    logging.getLogger(_noisy_logger).setLevel(logging.WARNING)
 #print("Logging configured")
 
 # Set Firefox options
@@ -641,11 +643,11 @@ async def main():
     while True:
         driver = None
         try:
-            logging.info("Starting Firefox WebDriver")
+            logging.debug("Starting Firefox WebDriver")
             service = FirefoxService(executable_path=geckodriver_path)
             driver = webdriver.Firefox(service=service, options=firefox_options)
             driver.get(twitter_link)
-            logging.info("Navigated to Twitter link")
+            logging.debug("Navigated to Twitter link")
             tweet_data = find_all_tweets(driver)
             new_tweets = check_and_write_tweets(tweet_data)
 

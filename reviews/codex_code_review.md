@@ -1,20 +1,38 @@
-# Codex Review - Code (uncommitted changes)
+# Codex Code Review (Uncommitted Changes)
 
-Geprüfter Scope:
-- Entfernung von `config/data.json.example`
-- README-Update zur `config`-Beschreibung und zum Legacy-Telegram-Hinweis
-- `MEMORY.md`-Update
-- aktueller uncommitted Stand in `/home/sascha/Dokumente/bots`
+Datum: 2026-03-10
+Status: **PASS**
 
-Prüfung:
-- Diff-Review (`git diff`, `git diff --cached`)
-- Referenzscan (`rg -n "data\.json\.example" --glob '!reviews/**'`)
-- Tests: `./venv/bin/python3 -m pytest tests tests-unit` (27 passed)
-- Lint: `./venv/bin/python3 -m ruff check .` (passed)
+## Ergebnis
 
-Bewertung:
-- Entfernung der Datei ist konsistent umgesetzt (staged delete), keine veralteten README-Verweise mehr.
-- README und MEMORY sind inhaltlich konsistent zum neuen Zustand (kein committed Template, `data.json` als optionale lokale Runtime-Datei).
-- Keine Regression oder Breaking-Änderung im geprüften Scope erkennbar.
+**0 Findings**
 
-0 Findings
+## Geprüfter Scope
+
+- `bots/bsky_bot.py`
+- `bots/nitter_bot.py`
+- `bots/telegram_control_bot.py`
+- `bots/twitter_bot.py`
+- `modules/control_bot_utils_module.py`
+- `modules/gemini_helper_module.py`
+- `modules/mastodon_bot_module.py`
+- `modules/state_store_module.py`
+- `modules/telegram_bot_module.py`
+- `tests-unit/test_control_bot_utils_log_parser.py`
+- `tests-unit/test_state_store_telegram_cleanup.py`
+
+## Prüfkriterien
+
+- Korrektheit
+- Edge-Cases
+- Security
+- Wartbarkeit
+- Tests
+- Breaking Changes
+
+## Ausgeführte Checks
+
+- `venv/bin/python -m pytest tests-unit/test_control_bot_utils_log_parser.py tests-unit/test_state_store_telegram_cleanup.py` -> **6 passed**
+- `venv/bin/python -m pytest tests-unit` -> **31 passed**
+- `venv/bin/python -m pytest tests tests-unit` -> **33 passed**
+- `venv/bin/python -m ruff check bots/bsky_bot.py bots/nitter_bot.py bots/telegram_control_bot.py bots/twitter_bot.py modules/control_bot_utils_module.py modules/gemini_helper_module.py modules/mastodon_bot_module.py modules/state_store_module.py modules/telegram_bot_module.py tests-unit/test_control_bot_utils_log_parser.py tests-unit/test_state_store_telegram_cleanup.py` -> **All checks passed**

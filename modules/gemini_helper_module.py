@@ -153,12 +153,12 @@ class GeminiModelManager:
             if available:
                 ordered = sorted(available, key=_model_sort_key)
                 self.last_refresh = datetime.now()
-                logger.info(f"gemini_helper: Verfügbare Gemini-Modelle (sortiert): {ordered}")
+                logger.debug(f"gemini_helper: Verfügbare Gemini-Modelle (sortiert): {ordered}")
                 return ordered
         except Exception as e:
             logger.error(f"gemini_helper: Modelle konnten nicht dynamisch ermittelt werden: {e}")
         ordered_fallback = sorted(HARDCODED_MODELS, key=_model_sort_key)
-        logger.info(f"gemini_helper: Fallback Gemini-Modelle (hardcoded): {ordered_fallback}")
+        logger.debug(f"gemini_helper: Fallback Gemini-Modelle (hardcoded): {ordered_fallback}")
         return ordered_fallback
 
     def _ensure_models(self, force: bool):

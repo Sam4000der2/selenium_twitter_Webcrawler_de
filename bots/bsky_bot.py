@@ -44,6 +44,8 @@ logging.basicConfig(
     level=LOG_LEVEL,
     format='%(asctime)s %(levelname)s %(message)s'
 )
+for _noisy_logger in ("httpx", "httpcore", "urllib3", "telegram"):
+    logging.getLogger(_noisy_logger).setLevel(logging.WARNING)
 
 # -------------------------
 # Konfiguration der Feeds
@@ -77,9 +79,9 @@ def load_saved_ids(feed_key: str):
     """
     entries = state_store.load_bsky_entries(feed_key)
     if entries:
-        logging.info(f"Loaded {len(entries)} saved links from DB key {feed_key}")
+        logging.debug(f"Loaded {len(entries)} saved links from DB key {feed_key}")
     else:
-        logging.info(f"Keine gespeicherten Links für DB key {feed_key}, starte leer.")
+        logging.debug(f"Keine gespeicherten Links für DB key {feed_key}, starte leer.")
     return entries
 
 
@@ -89,7 +91,7 @@ def save_ids(ids_list, feed_key: str):
     """
     try:
         state_store.save_bsky_entries(feed_key, ids_list)
-        logging.info(f"Saved {len(ids_list)} links to DB key {feed_key}")
+        logging.debug(f"Saved {len(ids_list)} links to DB key {feed_key}")
     except Exception as e:
         logging.error(f"bsky_bot: Fehler beim Schreiben der Einträge für {feed_key}: {e}")
 
@@ -163,7 +165,7 @@ def parse_feed(feed_config, debug: bool = False):
 
     try:
         now = time.time()
-        logging.info(f"Überprüfe Feed: {feed_name} ({feed_url})")
+        logging.debug(f"Überprüfe Feed: {feed_name} ({feed_url})")
         feed = feedparser.parse(feed_url)
 
         if getattr(feed, "bozo", False) and hasattr(feed, "bozo_exception"):
@@ -199,9 +201,9 @@ def parse_feed(feed_config, debug: bool = False):
                 if not debug:
                     save_ids(initial_saved, feed_key)
                 saved_ids = initial_saved
-                logging.info(f"Startup: {len(initial_saved)} alte Einträge (>3h) als gelesen markiert for {feed_name}")
+                logging.debug(f"Startup: {len(initial_saved)} alte Einträge (>3h) als gelesen markiert for {feed_name}")
             else:
-                logging.info(f"Startup: keine alten Einträge (>3h) zum Markieren für {feed_name}")
+                logging.debug(f"Startup: keine alten Einträge (>3h) zum Markieren für {feed_name}")
 
         saved_set = set(saved_ids)
         new_entries = []
@@ -240,7 +242,7 @@ def parse_feed(feed_config, debug: bool = False):
         # Schreibe die History (neueste oben), auf desired_keep trimmen
         if not debug:
             save_ids(unique_all_ids[:desired_keep], feed_key)
-        logging.info(f"Feed {feed_name}: {len(new_entries)} neue Einträge, history-size={len(unique_all_ids[:desired_keep])}")
+        logging.debug(f"Feed {feed_name}: {len(new_entries)} neue Einträge, history-size={len(unique_all_ids[:desired_keep])}")
 
         return new_entries
 

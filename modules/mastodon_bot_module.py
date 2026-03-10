@@ -153,6 +153,8 @@ logging.basicConfig(
     format='%(asctime)s %(levelname)s:%(message)s',
     force=True,
 )
+for _noisy_logger in ("httpx", "httpcore", "urllib3", "telegram"):
+    logging.getLogger(_noisy_logger).setLevel(logging.WARNING)
 
 # gemini_helper-Logger: nur Errors in twitter_bot.log, keine zusätzlichen Handler für Info
 helper_logger = logging.getLogger("gemini_helper")
@@ -171,7 +173,7 @@ if not alt_text_logger.handlers:
     alt_text_logger.addHandler(_alt_handler)
 alt_text_logger.setLevel(LOG_LEVEL)
 alt_text_logger.propagate = False
-logging.info("mastodon_bot: Logging configured.")
+logging.debug("mastodon_bot: Logging configured.")
 
 # Pfad für Tagging-Regeln (wird vom Control-Bot gepflegt)
 BERLIN_TZ = ZoneInfo("Europe/Berlin")
@@ -215,7 +217,7 @@ alt_text = (
 # Platzhalter für Quota-Sperren, damit generate_alt_text nicht mit NameError abbricht
 EXHAUSTED_MODELS: dict[str, datetime] = {}
 
-logging.info("mastodon_bot: Instances configured.")
+logging.debug("mastodon_bot: Instances configured.")
 
 MASTODON_MAX_CHARS = 500
 MASTODON_MIN_CONTENT_LEN = _parse_int_env("MASTODON_MIN_CONTENT_LEN", 8, min_value=1)
@@ -984,7 +986,7 @@ def filter_short_mastodon_messages(
 
     cores = [_extract_core_content(msg, username) for msg in messages]
     if cores and all(len(core) < min_len for core in cores):
-        logging.info(
+        logging.debug(
             f"mastodon_bot: Mindestlänge wird für {username} ignoriert (Originaltext kurz/leer)."
         )
         return messages
@@ -2015,7 +2017,7 @@ async def _process_pending_mastodon_retries(clients: list[tuple[str, Any]]):
 
 
 async def main(new_tweets, thread: bool = False):
-    logging.info("mastodon_bot: Entering main function.")
+    logging.debug("mastodon_bot: Entering main function.")
 
     mastodon_post_store.init_db()
     mastodon_post_store.prune_expired()
@@ -2032,7 +2034,7 @@ async def main(new_tweets, thread: bool = False):
 
         try:
             mastodon = Mastodon(access_token=access_token, api_base_url=api_base_url)
-            logging.info(f"mastodon_bot: Created Mastodon client for {instance_name}.")
+            logging.debug(f"mastodon_bot: Created Mastodon client for {instance_name}.")
             clients.append((instance_name, mastodon))
         except Exception as e:
             logging.error(f"mastodon_bot: Fehler beim Erstellen des Mastodon-Objekts für {instance_name}: {e}")
@@ -2053,7 +2055,7 @@ async def main(new_tweets, thread: bool = False):
             consumer="mastodon_bot",
             now_ts=int(time_module.time()),
         ) > 0:
-            logging.info(f"mastodon_bot: Überspringe Versionsabfrage für pausierte Instanz {instance_name}.")
+            logging.debug(f"mastodon_bot: Überspringe Versionsabfrage für pausierte Instanz {instance_name}.")
             continue
         version, _ = await _ensure_instance_version(
             instance_name,
@@ -2175,7 +2177,7 @@ async def main(new_tweets, thread: bool = False):
                             f"mastodon_bot: Quote-ID nicht gefunden im Store (instanz={instance_name}, status={status_id_raw}), nutze Link-Fallback"
                         )
                     elif not supports_quote:
-                        logging.info(
+                        logging.debug(
                             f"mastodon_bot: Instanz {instance_name} unterstützt keine offiziellen Quotes (Version={version}), nutze Link-Fallback"
                         )
                 else:
@@ -2384,7 +2386,7 @@ async def main(new_tweets, thread: bool = False):
             logging.error(f"mastodon_bot: Unerwarteter Fehler in Tweet-Loop (url={tweet.get('var_href', '')}, user={tweet.get('username', '')}): {e}")
             continue
 
-    logging.info("mastodon_bot: Main function completed.")
+    logging.debug("mastodon_bot: Main function completed.")
 
 
-logging.info("mastodon_bot: Script loaded.")
+logging.debug("mastodon_bot: Script loaded.")
