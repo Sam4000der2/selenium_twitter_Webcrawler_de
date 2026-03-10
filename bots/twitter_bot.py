@@ -8,9 +8,11 @@ if __package__ in {None, ""}:
 
 from modules import telegram_bot_module as telegram_bot
 from modules import mastodon_bot_module as mastodon_bot
+from modules import bot_variant_guard_module as variant_guard
 import time
 import re
 import asyncio
+import argparse
 import os
 import logging
 from logging.handlers import WatchedFileHandler
@@ -55,6 +57,9 @@ twitter_link = (
 
 HISTORY_LIMIT = 100
 HISTORY_TRIM_TO = 50
+_variant_sender_lock_handle = None
+_VARIANT_GROUP_NAME = "twitter_nitter_variant"
+_ephemeral_history_map: dict[str, list[str]] | None = None
 
 # Logging configuration
 logging.basicConfig(
@@ -585,9 +590,20 @@ def _save_history_map(history_map: dict[str, list[str]]):
     state_store.save_nitter_history(trimmed_map)
 
 
-def check_and_write_tweets(tweet_data):
+def check_and_write_tweets(tweet_data, *, persist_history: bool = True):
+    global _ephemeral_history_map
     try:
-        history_map = _load_history_map()
+        if persist_history:
+            history_map = _load_history_map()
+            _ephemeral_history_map = None
+        else:
+            if _ephemeral_history_map is None:
+                _ephemeral_history_map = _load_history_map()
+            history_map = {
+                user: list(urls[-HISTORY_LIMIT:])
+                for user, urls in (_ephemeral_history_map or {}).items()
+                if isinstance(urls, list)
+            }
         seen = {u for urls in history_map.values() for u in urls}
 
         new_tweets = []
@@ -624,7 +640,14 @@ def check_and_write_tweets(tweet_data):
                 history_map.setdefault(user_key, []).append(var_href)
                 seen.add(var_href)
 
-        _save_history_map(history_map)
+        if persist_history:
+            _save_history_map(history_map)
+        else:
+            _ephemeral_history_map = {
+                user: list(urls[-HISTORY_LIMIT:])
+                for user, urls in (history_map or {}).items()
+                if isinstance(urls, list)
+            }
         return new_tweets
     except Exception as ex:
         logging.error(f"twitter_bot: Error checking and writing tweets: {ex}")
@@ -638,7 +661,52 @@ def trim_existing_tweets_file():
     except Exception as ex:
         logging.error(f"twitter_bot: Error trimming existing tweets history: {ex}")
 
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Poll X/Twitter via Selenium.")
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--debug",
+        action="store_true",
+        help="Keine Auslieferung, keine DB-Updates; neue Items nur als Konsolen-Ausgabe.",
+    )
+    mode_group.add_argument(
+        "--nosending",
+        "--no-send",
+        "--dry-run",
+        dest="no_send",
+        action="store_true",
+        help="Keine Auslieferung, aber DB/History wird aktualisiert.",
+    )
+    return parser
+
+
+def _enforce_variant_sender_lock(args: argparse.Namespace) -> argparse.Namespace:
+    global _variant_sender_lock_handle
+    if args.debug or args.no_send:
+        return args
+
+    can_send, reason, lock_handle = variant_guard.try_acquire_sender_lock(
+        _VARIANT_GROUP_NAME,
+        "twitter_bot",
+    )
+    if can_send:
+        _variant_sender_lock_handle = lock_handle
+        logging.info(f"twitter_bot: Sender-Modus aktiv ({reason}).")
+        return args
+
+    args.debug = True
+    args.no_send = False
+    logging.warning(
+        "twitter_bot: Zweite Varianten-Instanz erkannt; wechsle in Testmodus "
+        f"ohne Senden und ohne DB-Updates ({reason})."
+    )
+    return args
+
+
 async def main():
+    args = _enforce_variant_sender_lock(_build_arg_parser().parse_args())
+    persist_history = not args.debug
     #print("Entering main function")
     while True:
         driver = None
@@ -649,19 +717,31 @@ async def main():
             driver.get(twitter_link)
             logging.debug("Navigated to Twitter link")
             tweet_data = find_all_tweets(driver)
-            new_tweets = check_and_write_tweets(tweet_data)
+            new_tweets = check_and_write_tweets(tweet_data, persist_history=persist_history)
 
-            try:
-                await telegram_bot.main(new_tweets)
-            except Exception as e:
-                logging.error(f"twitter_bot: An error occurred in telegram_bot: {e}")
+            if new_tweets:
+                if args.debug:
+                    print(f"Debug: {len(new_tweets)} neue Tweets (keine Auslieferung, keine DB-Updates).")
+                    for t in new_tweets:
+                        print(t.get("var_href", ""))
+                elif args.no_send:
+                    print(f"No-send: {len(new_tweets)} neue Tweets (DB aktualisiert, keine Auslieferung).")
+                    for t in new_tweets:
+                        print(t.get("var_href", ""))
 
-            try:
-                await mastodon_bot.main(new_tweets)
-            except Exception as e:
-                logging.error(f"twitter_bot: An error occurred in mastodon_bot: {e}")
+            if not args.debug and not args.no_send:
+                try:
+                    await telegram_bot.main(new_tweets)
+                except Exception as e:
+                    logging.error(f"twitter_bot: An error occurred in telegram_bot: {e}")
 
-            trim_existing_tweets_file()
+                try:
+                    await mastodon_bot.main(new_tweets)
+                except Exception as e:
+                    logging.error(f"twitter_bot: An error occurred in mastodon_bot: {e}")
+
+            if persist_history:
+                trim_existing_tweets_file()
 
             await asyncio.sleep(60)
         except Exception as e:

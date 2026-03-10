@@ -26,6 +26,7 @@ from dateutil.parser import parse
 import pytz
 import requests
 
+from modules import bot_variant_guard_module as variant_guard
 from modules import state_store_module as state_store
 from modules.url_safety_module import validate_outbound_url
 from modules.paths_module import (
@@ -38,6 +39,8 @@ from modules.paths_module import (
 _ENV_PARSE_WARNINGS: list[str] = []
 _telegram_bot_module = None
 _mastodon_bot_module = None
+_variant_sender_lock_handle = None
+_VARIANT_GROUP_NAME = "twitter_nitter_variant"
 
 
 def _load_delivery_modules():
@@ -47,6 +50,29 @@ def _load_delivery_modules():
     if _mastodon_bot_module is None:
         _mastodon_bot_module = importlib.import_module("modules.mastodon_bot_module")
     return _telegram_bot_module, _mastodon_bot_module
+
+
+def _enforce_variant_sender_lock(args: argparse.Namespace) -> argparse.Namespace:
+    global _variant_sender_lock_handle
+    if args.debug or args.no_send:
+        return args
+
+    can_send, reason, lock_handle = variant_guard.try_acquire_sender_lock(
+        _VARIANT_GROUP_NAME,
+        "nitter_bot",
+    )
+    if can_send:
+        _variant_sender_lock_handle = lock_handle
+        logging.info(f"nitter_bot: Sender-Modus aktiv ({reason}).")
+        return args
+
+    args.debug = True
+    args.no_send = False
+    logging.warning(
+        "nitter_bot: Zweite Varianten-Instanz erkannt; wechsle in Testmodus "
+        f"ohne Senden und ohne DB-Updates ({reason})."
+    )
+    return args
 
 
 def _parse_int_env(name: str, default: int, *, min_value: int | None = None) -> int:
@@ -1115,7 +1141,7 @@ async def main():
         action="store_true",
         help="Keine Auslieferung, aber DB/History wird aktualisiert.",
     )
-    args = parser.parse_args()
+    args = _enforce_variant_sender_lock(parser.parse_args())
     persist_history = not args.debug
     age_limit_seconds = None if args.debug else (MAX_ITEM_AGE_SECONDS or None)
 

@@ -1,38 +1,25 @@
 # Codex Code Review (Uncommitted Changes)
 
-Datum: 2026-03-10
-Status: **PASS**
+## Scope
+Geprüft wurden die aktuellen uncommitted Änderungen in:
+- `bots/nitter_bot.py`
+- `bots/twitter_bot.py`
+- `modules/bot_variant_guard_module.py`
+
+Fokus: Locking, Edge-Cases, Debug-Verhalten, Korrektheit.
 
 ## Ergebnis
+PASS — **0 Findings**
 
-**0 Findings**
-
-## Geprüfter Scope
-
-- `bots/bsky_bot.py`
-- `bots/nitter_bot.py`
-- `bots/telegram_control_bot.py`
-- `bots/twitter_bot.py`
-- `modules/control_bot_utils_module.py`
-- `modules/gemini_helper_module.py`
-- `modules/mastodon_bot_module.py`
-- `modules/state_store_module.py`
-- `modules/telegram_bot_module.py`
-- `tests-unit/test_control_bot_utils_log_parser.py`
-- `tests-unit/test_state_store_telegram_cleanup.py`
-
-## Prüfkriterien
-
-- Korrektheit
-- Edge-Cases
-- Security
-- Wartbarkeit
-- Tests
-- Breaking Changes
+## Verifizierte Punkte
+- Variant-Sender-Lock ist in beiden Bots korrekt eingebunden; zweite Instanz fällt kontrolliert in Debug-Modus ohne Senden/DB-Updates.
+- Fehlerpfad für ungültigen `BOTS_RUNTIME_LOCK_DIR` wird im Guard abgefangen (kein unkontrollierter Crash).
+- Debug-Deduplizierung im `twitter_bot` funktioniert prozessweit (kein zyklisches Wiedererkennen identischer Tweets innerhalb derselben Laufzeit).
+- Keine neuen offensichtlichen Race-/Edge-Case-Regressionen in den geänderten Pfaden.
 
 ## Ausgeführte Checks
-
-- `venv/bin/python -m pytest tests-unit/test_control_bot_utils_log_parser.py tests-unit/test_state_store_telegram_cleanup.py` -> **6 passed**
-- `venv/bin/python -m pytest tests-unit` -> **31 passed**
-- `venv/bin/python -m pytest tests tests-unit` -> **33 passed**
-- `venv/bin/python -m ruff check bots/bsky_bot.py bots/nitter_bot.py bots/telegram_control_bot.py bots/twitter_bot.py modules/control_bot_utils_module.py modules/gemini_helper_module.py modules/mastodon_bot_module.py modules/state_store_module.py modules/telegram_bot_module.py tests-unit/test_control_bot_utils_log_parser.py tests-unit/test_state_store_telegram_cleanup.py` -> **All checks passed**
+- `./venv/bin/ruff check bots/nitter_bot.py bots/twitter_bot.py modules/bot_variant_guard_module.py`
+- `./venv/bin/python -m py_compile bots/nitter_bot.py bots/twitter_bot.py modules/bot_variant_guard_module.py`
+- Repro-Snippets:
+  - Lock-Path-Fehlerpfad (`BOTS_RUNTIME_LOCK_DIR` auf Datei) => kontrolliertes `(False, reason, None)`.
+  - `check_and_write_tweets(..., persist_history=False)` zweimal mit identischem Input => `1`, dann `0`.

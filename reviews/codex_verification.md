@@ -1,67 +1,43 @@
-# Codex Verification: Issues #58, #59, #60
+# Codex Verification: Varianten-Lock Twitter/Nitter
 
 Datum: 2026-03-10
-Scope: Unabhängige Problem-/Issue-Verifikation gegen den aktuellen Stand im Repo (inkl. uncommitted Änderungen).
+Scope: Unabhängige Verifikation der aktuellen uncommitted Änderungen in `/home/sascha/Dokumente/bots` gegen die Anforderung:
+- Nur eine aktive Sender-Instanz gleichzeitig
+- Zweite Instanz nur Testmodus ohne Senden
+- `twitter_bot` und `nitter_bot` als Varianten derselben Bot-Gruppe
 
 ## Ergebnis
-0 Findings
+**0 Findings**
 
-## #58 Verifikation
-Akzeptanzkriterium: Bei `Forbidden: bot was blocked by user` werden alle Telegram-Nutzerdaten automatisch gelöscht.
+## Geprüfte Änderungen
+- `bots/twitter_bot.py`
+- `bots/nitter_bot.py`
+- `modules/bot_variant_guard_module.py` (neu)
 
-Geprüfte Implementierung:
-- `modules/telegram_bot_module.py:105` erkennt Block-Fehler über `_is_blocked_by_user_error(...)`.
-- `modules/telegram_bot_module.py:114` führt Cleanup über `_cleanup_blocked_chat(...)` aus:
-  - `state_store.remove_telegram_chat(chat_id)`
-  - `state_store.remove_failed_deliveries_for_target("telegram", chat_id)`
-- `modules/telegram_bot_module.py:257` triggert Cleanup direkt im Sendefehlerpfad.
-- `modules/state_store_module.py:122` und `modules/state_store_module.py:433` implementieren die Löschoperationen für User-State und Retry-Jobs.
+## Verifikation je Anforderung
 
-Evidenz:
-- `./venv/bin/python -m pytest -q tests-unit/test_state_store_telegram_cleanup.py` -> pass
-- Zusätzlicher unabhängiger Runtime-Check (Fake-Bot wirft `Forbidden: bot was blocked by user`):
-  - Chat-State (`chat_ids`, `filter_rules`) für blockierten Chat wird entfernt.
-  - Zugehörige `failed_deliveries` für Telegram-Target werden gelöscht.
-  - Pending-Retry-Snapshot für denselben blockierten Chat wird im selben Lauf nicht erneut gesendet (nur 1 tatsächlicher Send-Versuch).
+1. Nur eine aktive Sender-Instanz gleichzeitig
+- Beide Bots rufen `variant_guard.try_acquire_sender_lock(...)` auf.
+- Das Guard-Modul nutzt einen gemeinsamen Datei-Lock via `fcntl.flock(... LOCK_EX | LOCK_NB)` pro Gruppenname.
+- Zwei-Prozess-Laufzeittest bestätigt: erste Instanz `can_send=true`, parallele zweite Instanz `can_send=false`.
 
-Bewertung: Erfüllt.
+2. Zweite Instanz nur Testmodus ohne Senden
+- Bei Lock-Konflikt erzwingen beide Bots in `_enforce_variant_sender_lock(...)`:
+  - `args.debug = True`
+  - `args.no_send = False`
+- Versandpfade sind in beiden Bots durch `if not args.debug and not args.no_send:` geschützt.
+- Debug-Modus setzt `persist_history = False`; damit keine DB/History-Updates.
 
-## #59 Verifikation
-Akzeptanzkriterium: Telegram Control Bot findet/zeigt INFO-Meldungen korrekt.
+3. `twitter_bot` und `nitter_bot` als Varianten derselben Bot-Gruppe
+- Beide Bots verwenden denselben Gruppennamen:
+  - `_VARIANT_GROUP_NAME = "twitter_nitter_variant"`
 
-Geprüfte Implementierung:
-- `modules/control_bot_utils_module.py:53` enthält den robusten Level-Parser (`DEBUG|INFO|WARNING|ERROR|CRITICAL`, mit/ohne `:`).
-- `modules/control_bot_utils_module.py:88` stellt `split_log_level_and_body(...)` bereit.
-- `bots/telegram_control_bot.py:591` nutzt diesen Parser in `split_level_and_body(...)`.
-- `bots/telegram_control_bot.py:914` (`admin_infos_command`) filtert explizit mit `levels=("INFO",)`.
-
-Evidenz:
-- `./venv/bin/python -m pytest -q tests-unit/test_control_bot_utils_log_parser.py` -> pass
-- Zusätzlicher unabhängiger Runtime-Check mit synthetischer Logdatei:
-  - INFO im Format `INFO:...` und `INFO ...` wird von `read_last_errors_grouped_multi(..., levels=("INFO",))` korrekt gefunden.
-  - `admin_infos_command(...)` liefert beide INFO-Treffer in der Bot-Ausgabe.
-
-Bewertung: Erfüllt.
-
-## #60 Verifikation
-Akzeptanzkriterium: INFO-Level ist reduziert; verbose Detail-Logs sind DEBUG.
-
-Geprüfte Änderungen (Diff- und Codeprüfung):
-- Detailreiche Logs wurden in den betroffenen Modulen von `INFO` auf `DEBUG` abgesenkt, u. a.:
-  - `bots/bsky_bot.py` (Feed-/History-Detailmeldungen)
-  - `bots/nitter_bot.py` (Feed-Check/alte Einträge/Debug-Mode-History)
-  - `bots/twitter_bot.py` (WebDriver-/Navigation-Details)
-  - `modules/mastodon_bot_module.py` (Setup-/Main-/Client-/Fallback-Details)
-  - `modules/gemini_helper_module.py` (Modellauflistung)
-  - `modules/telegram_bot_module.py` (Retry-Erfolg im Pending-Retry-Loop)
-- Zusätzlich sind noisy Third-Party-Logger in den relevanten Bots/Modulen auf `WARNING` begrenzt:
-  - `httpx`, `httpcore`, `urllib3`, `telegram`
-
-Evidenz:
-- `./venv/bin/python -m pytest -q tests-unit/test_paths_log_level.py` -> pass
-- Unabhängige statische Verifikation per `rg`/Diff bestätigt die Umstellung der genannten Detail-Logs auf `DEBUG`.
-
-Bewertung: Erfüllt.
+## Ausgeführte Checks
+- `./venv/bin/python -m ruff check bots/nitter_bot.py bots/twitter_bot.py modules/bot_variant_guard_module.py` -> pass
+- `./venv/bin/python -m py_compile bots/nitter_bot.py bots/twitter_bot.py modules/bot_variant_guard_module.py` -> pass
+- `./venv/bin/python -m pytest tests tests-unit` -> pass (`33 passed`)
+- Isolierter Zwei-Prozess-Locktest -> pass (erste Instanz sendeberechtigt, zweite Instanz blockiert)
+- Sanity-Check erzwungener Konfliktmodus (`_enforce_variant_sender_lock`) in beiden Bots -> `debug=True`, `no_send=False`
 
 ## Schlussfazit
-0 Findings
+**0 Findings**
