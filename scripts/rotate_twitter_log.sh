@@ -2,19 +2,23 @@
 set -euo pipefail
 umask 077
 
-BASE_DIR="${BOTS_BASE_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+BASE_DIR="${BOTS_BASE_DIR:-$REPO_ROOT}"
 LOGFILE="${BOT_LOG_FILE:-$BASE_DIR/twitter_bot.log}"
-LOGDIR="$BASE_DIR/logs"
+LOGDIR="${BOT_LOG_DIR:-$BASE_DIR/logs}"
 PYTHON_BIN="${PYTHON_BIN:-$BASE_DIR/venv/bin/python3}"
+STORE_LOGS_MODULE="tools.store_twitter_logs_tool"
+LOG_BASENAME="$(basename "$LOGFILE")"
 
 YESTERDAY=$(date -d "yesterday" +"%Y-%m-%d")
-ARCHIVED_LOG="$LOGDIR/twitter_bot.log.$YESTERDAY"
+ARCHIVED_LOG="$LOGDIR/$LOG_BASENAME.$YESTERDAY"
 
-cd -- "$BASE_DIR"
+cd -- "$REPO_ROOT"
 if [ -x "$PYTHON_BIN" ]; then
-    "$PYTHON_BIN" -m tools.store_twitter_logs_tool
+    BOTS_BASE_DIR="$BASE_DIR" "$PYTHON_BIN" -m "$STORE_LOGS_MODULE"
 else
-    python3 -m tools.store_twitter_logs_tool
+    BOTS_BASE_DIR="$BASE_DIR" python3 -m "$STORE_LOGS_MODULE"
 fi
 
 mkdir -p "$LOGDIR"
@@ -27,4 +31,4 @@ fi
 
 install -m 600 /dev/null "$LOGFILE"
 
-find "$LOGDIR" -type f -name "twitter_bot.log.*" -mtime +14 -delete
+find "$LOGDIR" -type f -name "$LOG_BASENAME.*" -mtime +14 -delete
